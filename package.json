@@ -1,0 +1,43 @@
+{
+  "name": "kimi-game",
+  "version": "0.1.0",
+  "description": "kimi/game — a small game engine for models (and people), on three.js and canvas 2D. Built for KimiLM and KimiOS.",
+  "main": "dist/kimi-game.js",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "check": "tsc -p .",
+    "test": "node --test test/*.test.mjs",
+    "serve": "python3 -m http.server 8080"
+  },
+  "keywords": [
+    "game-engine",
+    "three.js",
+    "llm",
+    "kimilm",
+    "kimios"
+  ],
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "@types/three": "^0.187.0",
+    "esbuild": "^0.28.2",
+    "three": "^0.187.0",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "module": "dist/kimi-game.js",
+  "exports": {
+    ".": "./dist/kimi-game.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "REFERENCE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiplabat/kimi-game"
+  },
+  "peerDependencies": {
+    "three": ">=0.170.0"
+  }
+}
