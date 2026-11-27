@@ -1,7 +1,7 @@
 // A scene holds entities, timers and tick handlers, and runs one fixed step at a time.
 
 import { Entity, type EntityOpts } from "./entity";
-import { SpatialHash, overlap, resolve, raycast, type RayHit } from "./physics";
+import { SpatialHash, overlap, resolve, raycast, raycast3, type RayHit, type Ray3Hit } from "./physics";
 import { steerToward, arrive } from "./ai";
 import type { Game } from "./game";
 import type { UI } from "./ui";
@@ -32,6 +32,9 @@ export class Scene {
   readonly entities: Entity[] = [];
   time = 0;
   readonly hash: SpatialHash;
+  /** Static things (walls, props) live in their own hash, rebuilt only when one is added or removed. */
+  readonly staticHash: SpatialHash;
+  private staticDirty = true;
   private timers: Timer[] = [];
   private tickFns: ((dt: number, s: Scene) => void)[] = [];
   _drawFns: ((ctx: CanvasRenderingContext2D, s: Scene) => void)[] = [];
@@ -41,6 +44,7 @@ export class Scene {
 
   constructor(public readonly g: Game, public readonly name: string, public readonly params: any) {
     this.hash = new SpatialHash(g.mode === "3d" ? 6 : 96);
+    this.staticHash = new SpatialHash(g.mode === "3d" ? 6 : 96);
   }
 
   get ui(): UI { return this.g.ui; }
@@ -52,6 +56,7 @@ export class Scene {
     const e = o instanceof Entity ? o : new Entity(withDefaults(o, this.g.mode));
     e.scene = this;
     e._place(this.g.mode);
+    if (e.opts.static) this.staticDirty = true;
     if (e.opts.controls === "twin") this.g.input.wantsAimStick = true;
     this.entities.push(e);
     this.g.renderer.attach(e);
@@ -111,7 +116,7 @@ export class Scene {
   /** Living entities with the tag within r of a point. */
   within(tag: string, at: V2, r: number): Entity[] {
     const out: Entity[] = [];
-    for (const e of this.hash.query(at[0], at[1], r)) {
+    for (const e of this.query(at[0], at[1], r)) {
       if (!e.alive || !e.tags.has(tag)) continue;
       const [x, y] = e.p;
       if (Math.hypot(x - at[0], y - at[1]) <= r + e.radius) out.push(e);
@@ -121,6 +126,28 @@ export class Scene {
   /** Nearest entity with one of the tags along a ray on the plane. */
   ray(from: V2, dir: V2, max = 1e4, tags?: string[], ignore?: Entity): RayHit | null {
     return raycast(this.entities, from, dir, max, tags, ignore);
+  }
+
+  /** 3D ray (boxes, capsules with head shots, spheres): s.ray3([x,y,z], [dx,dy,dz], 200, ["wall","npc"], me). */
+  ray3(from: [number, number, number], dir: [number, number, number], max = 1e4, tags?: string[], ignore?: Entity | Entity[]): Ray3Hit | null {
+    // broadphase: walk the hash cells along the ray instead of testing every entity
+    const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const dx = dir[0] / l, dz = dir[2] / l;
+    const plane = Math.hypot(dx, dz);
+    const c = this.hash.cell;
+    const seen = new Set<number>();
+    const cand: Entity[] = [];
+    const buf: Entity[] = [];
+    const take = (x: number, z: number, r: number) => {
+      buf.length = 0;
+      for (const e of this.query(x, z, r, buf)) if (!seen.has(e.id)) { seen.add(e.id); cand.push(e); }
+    };
+    if (this.g.mode !== "3d" || plane < 1e-3) take(from[0], from[2], c);
+    else {
+      const step = (c * 0.5) / plane;
+      for (let t = 0; t <= max + step; t += step) take(from[0] + dx * t, from[2] + dz * t, c * 0.75);
+    }
+    return raycast3(cand, from, dir, max, tags, ignore);
   }
 
   // ---------- effects ----------
@@ -164,14 +191,14 @@ export class Scene {
     this.ui.tick(dt);
 
     // rebuild the spatial hash at the start so queries during AI are fresh
-    this.hash.clear();
-    for (const e of this.entities) if (e.alive) this.hash.insert(e);
+    this.reindex();
 
     const n = this.entities.length;
     const is3d = g.mode === "3d";
     for (let i = 0; i < n; i++) {
       const e = this.entities[i];
       if (!e.alive) continue;
+      if (e.opts.static && !e._tick.length && !e._ai.length) continue;
       const d = e.opts.unscaled ? dtReal : dt;
       e.ox = e.x; e.oy = e.y; e.oz = e.z; e.orot = e.rot;
       e.age += d;
@@ -188,15 +215,14 @@ export class Scene {
     }
 
     // collisions
-    this.hash.clear();
-    for (const e of this.entities) if (e.alive) this.hash.insert(e);
+    this.reindex();
     const buf: Entity[] = [];
     for (let pass = 0; pass < 2; pass++) {
       for (const a of this.entities) {
         if (!a.alive || !a.opts.solid || a.opts.static) continue;
         const [x, y] = a.p;
         buf.length = 0;
-        for (const b of this.hash.query(x, y, this.bound(a), buf)) {
+        for (const b of this.query(x, y, this.bound(a), buf)) {
           if (b === a || !b.alive || !b.opts.solid) continue;
           if (!b.opts.static && b.id < a.id && !Array.isArray(b.opts.solid)) continue;
           const sa = a.opts.solid, sb = b.opts.solid;
@@ -211,7 +237,7 @@ export class Scene {
       if (!a.alive || (a._hit.size === 0 && a._overlap.size === 0)) continue;
       const [x, y] = a.p;
       buf.length = 0;
-      const near = this.hash.query(x, y, this.bound(a), buf);
+      const near = this.query(x, y, this.bound(a), buf);
       const now = new Set<number>();
       for (const b of near) {
         if (b === a || !b.alive) continue;
@@ -239,10 +265,26 @@ export class Scene {
     const eps = is3d ? 0.05 : 1.5;
     let w = 0;
     for (const e of this.entities) {
-      if (e.alive) { e._checkMoved(eps); this.entities[w++] = e; }
-      else g.renderer.detach(e);
+      if (e.alive) { if (!e.opts.static) e._checkMoved(eps); this.entities[w++] = e; }
+      else { g.renderer.detach(e); if (e.opts.static) this.staticDirty = true; }
     }
     this.entities.length = w;
+  }
+
+  /** Moving things are re-hashed every step; static ones only when they change. */
+  private reindex() {
+    if (this.staticDirty) {
+      this.staticHash.clear();
+      for (const e of this.entities) if (e.alive && e.opts.static) this.staticHash.insert(e);
+      this.staticDirty = false;
+    }
+    this.hash.clear();
+    for (const e of this.entities) if (e.alive && !e.opts.static) this.hash.insert(e);
+  }
+  /** Everything whose cells touch a circle on the plane (moving and static). */
+  query(x: number, y: number, r: number, out: Entity[] = []): Entity[] {
+    this.hash.query(x, y, r, out);
+    return this.staticHash.query(x, y, r, out);
   }
 
   private bound(e: Entity) {

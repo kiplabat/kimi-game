@@ -37,6 +37,8 @@ export class Input {
   using: "keys" | "pad" | "touch" = "keys";
   /** Pointer in canvas CSS pixels, plus world position (filled by the renderer). */
   pointer = { x: 0, y: 0, down: false, inside: false, moved: false, world: { x: 0, y: 0 } as Vec2 };
+  private lookAcc = { x: 0, y: 0 };
+  private wheelAcc = 0;
 
   private keys = new Set<string>();
   private edgeDown = new Set<string>();
@@ -52,6 +54,8 @@ export class Input {
   private touchEl?: HTMLElement;
   private anyHandlers: (() => void)[] = [];
   wantsAimStick = false;
+  /** Mouse look without pointer lock (when a page or frame refuses the lock). */
+  freeLook = false;
 
   constructor(private root: HTMLElement) {
     addEventListener("keydown", (e) => {
@@ -68,6 +72,10 @@ export class Input {
     });
     addEventListener("blur", () => this.keys.clear());
     root.addEventListener("contextmenu", (e) => e.preventDefault());
+    root.addEventListener("wheel", (e) => { this.wheelAcc += Math.sign(e.deltaY); e.preventDefault(); }, { passive: false });
+    addEventListener("mousemove", (e) => {
+      if (document.pointerLockElement || this.freeLook) { this.lookAcc.x += e.movementX; this.lookAcc.y += e.movementY; }
+    });
     root.addEventListener("pointermove", (e) => {
       if (e.pointerType === "touch") return;
       const r = root.getBoundingClientRect();
@@ -77,8 +85,10 @@ export class Input {
       this.pointer.moved = true;
       if (this.using === "touch") this.using = "keys";
     });
-    root.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "touch") return;
+    // mousedown/mouseup (not pointer events): a second button pressed while another is held
+    // (click to shoot while holding right-click to aim) sends no new pointerdown.
+    root.addEventListener("mousedown", (e) => {
+      if ((e as any).sourceCapabilities?.firesTouchEvents) return;
       const code = "mouse:" + e.button;
       this.keys.add(code);
       this.edgeDown.add(code);
@@ -86,12 +96,11 @@ export class Input {
       this.using = "keys";
       this.fireAny();
     });
-    addEventListener("pointerup", (e) => {
-      if (e.pointerType === "touch") return;
+    addEventListener("mouseup", (e) => {
       const code = "mouse:" + e.button;
       this.keys.delete(code);
       this.edgeUp.add(code);
-      this.pointer.down = false;
+      if (e.buttons === 0) this.pointer.down = false;
     });
     root.addEventListener("touchstart", (e) => this.onTouch(e, "start"), { passive: false });
     root.addEventListener("touchmove", (e) => this.onTouch(e, "move"), { passive: false });
@@ -108,11 +117,35 @@ export class Input {
     for (const f of [...this.anyHandlers]) f();
   }
 
-  /** Bind extra keys to an action: input.bind("bomb", ["KeyB", "pad:3"]). */
-  bind(action: string, codes: string[]) {
+  /** Bind extra keys to an action: input.bind("bomb", ["KeyB", "pad:3"]). With { replace: true } the old keys go. */
+  bind(action: string, codes: string[], o: { replace?: boolean } = {}) {
     const a = ALIASES[action] ?? action;
-    this.bindings[a] = [...(this.bindings[a] ?? []), ...codes];
+    this.bindings[a] = o.replace ? [...codes] : [...(this.bindings[a] ?? []), ...codes];
   }
+
+  /** Lock the mouse to the game (needs a click or key press first). */
+  lockPointer() {
+    if (document.pointerLockElement || this.touch.on) return;
+    try { const r = (this.root.querySelector("canvas") ?? this.root).requestPointerLock?.() as any; r?.catch?.(() => {}); } catch {}
+  }
+  get locked() { return !!document.pointerLockElement; }
+  /** Mouse movement since the last call (pixels), plus the right stick and the touch aim stick scaled to match. */
+  look(dt = 1 / 60): Vec2 {
+    let x = this.lookAcc.x, y = this.lookAcc.y;
+    this.lookAcc.x = this.lookAcc.y = 0;
+    const p = this.pads[0];
+    if (p) {
+      const ax = p.axes[2] ?? 0, ay = p.axes[3] ?? 0;
+      if (len(ax, ay) > DEAD) { x += ax * Math.abs(ax) * 900 * dt; y += ay * Math.abs(ay) * 650 * dt; }
+    }
+    if (this.touch.aim.id >= 0) {
+      x += ((this.touch.aim.x - this.touch.aim.ox) / 50) * 700 * dt;
+      y += ((this.touch.aim.y - this.touch.aim.oy) / 50) * 500 * dt;
+    }
+    return { x, y };
+  }
+  /** Mouse wheel steps since the last call (+1 down, -1 up). */
+  wheel(): number { const w = this.wheelAcc; this.wheelAcc = 0; return w; }
 
   private resolve(action: string) {
     const a = ALIASES[action] ?? action;

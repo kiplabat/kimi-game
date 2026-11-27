@@ -1,4 +1,4 @@
-# kimi/game reference (v0.1)
+# kimi/game reference (v0.2)
 
 A small game engine. Write the game in one module script. You can use the same calls in 2D (canvas) and 3D (three.js). Keys, mouse, touch and gamepads, the title card, pause, game over, high scores, sound and the report all come built in.
 
@@ -128,6 +128,24 @@ Behaviours go in `ai:`. All take an optional `speed`. `target` can be an entity,
 - warnings such as `"3 enemy, none moved"` or `"the player never collided with anything"`, and errors.
 
 F3 shows the report on screen.
+
+## Your own 3D look (v0.2)
+For big 3D games, the engine still runs the loop, input, entities, collisions, AI, sound and the report, while you draw the world yourself:
+- `game({ mode: "3d", preset: "custom", bloom: false, floor: false })`: no built-in sky, lights, fog or floor.
+- `s.camera.manual()`, then move `g.three.camera` yourself.
+- `g.three.setPipeline((dt) => composer.render(dt))` replaces the final draw.
+- `g.three.onQuality((q) => …)` is called with the quality level (0–3) now and on every change.
+- `g.three.setQuality(q)`; `adaptive: false` or `{ lowerAbove: 30 }` (frame ms).
+
+Mouse look and 3D hits:
+- `g.input.lockPointer()`, then `g.input.look()` (mouse plus right stick deltas) and `g.input.wheel()`.
+- `g.input.bind(action, keys, { replace: true })`.
+- `s.ray3([x, y, z], [dx, dy, dz], max, tags, ignore)` returns `{ entity, dist, point, normal, part }`, where `part` is `"head"` on the top of a capsule.
+
+Entity options:
+- `capsule: [r, h]` for people (enables head shots).
+- `hidden: true` for invisible colliders.
+- `static: true` things are hashed once, so thousands of walls are cheap.
 
 ## Rules for good games
 - Tag everything that collides. Use `on("hit")` for events and `solid` only for things that must block.

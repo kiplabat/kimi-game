@@ -1,6 +1,6 @@
 {
   "name": "kimi-game",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "kimi/game — a small game engine for models (and people), on three.js and canvas 2D. Built for KimiLM and KimiOS.",
   "main": "dist/kimi-game.js",
   "scripts": {

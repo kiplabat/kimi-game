@@ -1,4 +1,4 @@
-/* kimi/game 0.1.0 — Apache-2.0 — https://github.com/kiplabat/kimi-game. Built on three.js (MIT). */
+/* kimi/game 0.2.0 — Apache-2.0 — https://github.com/kiplabat/kimi-game. Built on three.js (MIT). */
 
 // src/entity.ts
 var NEXT_ID = 1;
@@ -222,7 +222,8 @@ function shapeOf(e) {
 }
 function overlap(a, b) {
   if (a.is3d) {
-    const ha = a.box ? a.box[1] / 2 : a.radius, hb = b.box ? b.box[1] / 2 : b.radius;
+    const half = (e) => e.box ? e.box[1] / 2 : e.opts.capsule ? e.opts.capsule[1] / 2 : e.radius;
+    const ha = half(a), hb = half(b);
     if (Math.abs(a.y - b.y) > (ha + hb) * Math.max(a.scale, b.scale)) return null;
   }
   const A = shapeOf(a), B = shapeOf(b);
@@ -365,6 +366,95 @@ function raycast(list, from, dir, max, tags, ignore) {
     }
     if (t !== null && t <= max && (!best || t < best.dist)) {
       best = { entity: e, dist: t, point: [from[0] + dx * t, from[1] + dy * t] };
+    }
+  }
+  return best;
+}
+function raycast3(list, from, dir, max, tags, ignore) {
+  const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const dx = dir[0] / l, dy = dir[1] / l, dz = dir[2] / l;
+  const ig = Array.isArray(ignore) ? ignore : ignore ? [ignore] : [];
+  let best = null;
+  let bestT = max;
+  for (const e of list) {
+    if (!e.alive || ig.includes(e)) continue;
+    if (tags && !tags.some((t2) => e.tags.has(t2))) continue;
+    const br = e.box ? Math.hypot(e.box[0], e.box[1], e.box[2] ?? e.box[0]) / 2 : e.opts.capsule ? e.opts.capsule[1] / 2 + 0.1 : e.radius;
+    const ox = e.x - from[0], oy = e.y - from[1], oz = e.z - from[2];
+    const proj = ox * dx + oy * dy + oz * dz;
+    if (proj < -br || proj - br > bestT) continue;
+    const d2 = ox * ox + oy * oy + oz * oz - proj * proj;
+    if (d2 > br * br) continue;
+    let t = -1, nx = 0, ny = 0, nz = 0;
+    let part = "sphere";
+    if (e.box) {
+      const hw = e.box[0] * e.scale / 2, hh = e.box[1] * e.scale / 2, hd = (e.box[2] ?? e.box[0]) * e.scale / 2;
+      const inv = (v) => Math.abs(v) < 1e-12 ? 1e12 : 1 / v;
+      const ix = inv(dx), iy = inv(dy), iz = inv(dz);
+      const t1 = (e.x - hw - from[0]) * ix, t2 = (e.x + hw - from[0]) * ix;
+      const t3 = (e.y - hh - from[1]) * iy, t4 = (e.y + hh - from[1]) * iy;
+      const t5 = (e.z - hd - from[2]) * iz, t6 = (e.z + hd - from[2]) * iz;
+      const tx = Math.min(t1, t2), ty = Math.min(t3, t4), tz = Math.min(t5, t6);
+      const tmin = Math.max(tx, ty, tz);
+      const tmax = Math.min(Math.max(t1, t2), Math.max(t3, t4), Math.max(t5, t6));
+      if (tmax >= Math.max(0, tmin)) {
+        t = Math.max(0, tmin);
+        if (tmin === tx) nx = dx > 0 ? -1 : 1;
+        else if (tmin === ty) ny = dy > 0 ? -1 : 1;
+        else nz = dz > 0 ? -1 : 1;
+        part = "box";
+      }
+    } else if (e.opts.capsule) {
+      const [r, h] = e.opts.capsule;
+      const ya = e.y - h / 2 + r, yb = e.y + h / 2 - r;
+      const bax = 0, bay = yb - ya, baz = 0;
+      const oax = from[0] - e.x, oay = from[1] - ya, oaz = from[2] - e.z;
+      const baba = bay * bay, bard = bay * dy, baoa = bay * oay;
+      const rdoa = dx * oax + dy * oay + dz * oaz, oaoa = oax * oax + oay * oay + oaz * oaz;
+      const a = baba - bard * bard, b = baba * rdoa - baoa * bard, c = baba * oaoa - baoa * baoa - r * r * baba;
+      let h2 = b * b - a * c;
+      if (h2 >= 0 && a > 1e-9) {
+        const tt = (-b - Math.sqrt(h2)) / a;
+        const y = baoa + tt * bard;
+        if (y > 0 && y < baba && tt >= 0) t = tt;
+        else {
+          const ocy = y <= 0 ? oay : oay - bay;
+          const bb = dx * oax + dy * ocy + dz * oaz, cc = oax * oax + ocy * ocy + oaz * oaz - r * r;
+          h2 = bb * bb - cc;
+          if (h2 > 0) {
+            const t2 = -bb - Math.sqrt(h2);
+            if (t2 >= 0) t = t2;
+          }
+        }
+      }
+      void bax;
+      void baz;
+      if (t >= 0) {
+        const py = from[1] + dy * t;
+        part = py > e.y + h / 2 - r * 1.7 ? "head" : "body";
+        const cy = Math.max(ya, Math.min(yb, py));
+        const px = from[0] + dx * t - e.x, pz = from[2] + dz * t - e.z;
+        const nl = Math.hypot(px, py - cy, pz) || 1;
+        nx = px / nl;
+        ny = (py - cy) / nl;
+        nz = pz / nl;
+      }
+    } else {
+      const r = e.radius * e.scale;
+      const disc = proj * proj - (ox * ox + oy * oy + oz * oz - r * r);
+      if (disc >= 0) {
+        const t0 = proj - Math.sqrt(disc);
+        t = t0 >= 0 ? t0 : 0;
+        const px = from[0] + dx * t - e.x, py = from[1] + dy * t - e.y, pz = from[2] + dz * t - e.z;
+        const nl = Math.hypot(px, py, pz) || 1;
+        nx = px / nl;
+        ny = py / nl;
+        nz = pz / nl;
+      }
+    }
+    if (t >= 0 && t < bestT) {
+      bestT = t;
+      best = { entity: e, dist: t, point: [from[0] + dx * t, from[1] + dy * t, from[2] + dz * t], normal: [nx, ny, nz], part };
     }
   }
   return best;
@@ -747,6 +837,7 @@ var Scene = class {
     this.name = name;
     this.params = params;
     this.hash = new SpatialHash(g.mode === "3d" ? 6 : 96);
+    this.staticHash = new SpatialHash(g.mode === "3d" ? 6 : 96);
   }
   g;
   name;
@@ -754,6 +845,9 @@ var Scene = class {
   entities = [];
   time = 0;
   hash;
+  /** Static things (walls, props) live in their own hash, rebuilt only when one is added or removed. */
+  staticHash;
+  staticDirty = true;
   timers = [];
   tickFns = [];
   _drawFns = [];
@@ -774,6 +868,7 @@ var Scene = class {
     const e = o instanceof Entity ? o : new Entity(withDefaults(o, this.g.mode));
     e.scene = this;
     e._place(this.g.mode);
+    if (e.opts.static) this.staticDirty = true;
     if (e.opts.controls === "twin") this.g.input.wantsAimStick = true;
     this.entities.push(e);
     this.g.renderer.attach(e);
@@ -833,7 +928,7 @@ var Scene = class {
   /** Living entities with the tag within r of a point. */
   within(tag, at, r) {
     const out = [];
-    for (const e of this.hash.query(at[0], at[1], r)) {
+    for (const e of this.query(at[0], at[1], r)) {
       if (!e.alive || !e.tags.has(tag)) continue;
       const [x, y] = e.p;
       if (Math.hypot(x - at[0], y - at[1]) <= r + e.radius) out.push(e);
@@ -843,6 +938,29 @@ var Scene = class {
   /** Nearest entity with one of the tags along a ray on the plane. */
   ray(from, dir, max = 1e4, tags, ignore) {
     return raycast(this.entities, from, dir, max, tags, ignore);
+  }
+  /** 3D ray (boxes, capsules with head shots, spheres): s.ray3([x,y,z], [dx,dy,dz], 200, ["wall","npc"], me). */
+  ray3(from, dir, max = 1e4, tags, ignore) {
+    const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+    const dx = dir[0] / l, dz = dir[2] / l;
+    const plane = Math.hypot(dx, dz);
+    const c = this.hash.cell;
+    const seen = /* @__PURE__ */ new Set();
+    const cand = [];
+    const buf = [];
+    const take = (x, z, r) => {
+      buf.length = 0;
+      for (const e of this.query(x, z, r, buf)) if (!seen.has(e.id)) {
+        seen.add(e.id);
+        cand.push(e);
+      }
+    };
+    if (this.g.mode !== "3d" || plane < 1e-3) take(from[0], from[2], c);
+    else {
+      const step = c * 0.5 / plane;
+      for (let t = 0; t <= max + step; t += step) take(from[0] + dx * t, from[2] + dz * t, c * 0.75);
+    }
+    return raycast3(cand, from, dir, max, tags, ignore);
   }
   // ---------- effects ----------
   at3(at) {
@@ -899,13 +1017,13 @@ var Scene = class {
       }
     }
     this.ui.tick(dt);
-    this.hash.clear();
-    for (const e of this.entities) if (e.alive) this.hash.insert(e);
+    this.reindex();
     const n = this.entities.length;
     const is3d = g.mode === "3d";
     for (let i = 0; i < n; i++) {
       const e = this.entities[i];
       if (!e.alive) continue;
+      if (e.opts.static && !e._tick.length && !e._ai.length) continue;
       const d = e.opts.unscaled ? dtReal : dt;
       e.ox = e.x;
       e.oy = e.y;
@@ -925,15 +1043,14 @@ var Scene = class {
       this.integrate(e, d, is3d);
       if (typeof e.opts.dies === "number" && e.age >= e.opts.dies) e.die("expired");
     }
-    this.hash.clear();
-    for (const e of this.entities) if (e.alive) this.hash.insert(e);
+    this.reindex();
     const buf = [];
     for (let pass = 0; pass < 2; pass++) {
       for (const a of this.entities) {
         if (!a.alive || !a.opts.solid || a.opts.static) continue;
         const [x, y] = a.p;
         buf.length = 0;
-        for (const b of this.hash.query(x, y, this.bound(a), buf)) {
+        for (const b of this.query(x, y, this.bound(a), buf)) {
           if (b === a || !b.alive || !b.opts.solid) continue;
           if (!b.opts.static && b.id < a.id && !Array.isArray(b.opts.solid)) continue;
           const sa = a.opts.solid, sb = b.opts.solid;
@@ -951,7 +1068,7 @@ var Scene = class {
       if (!a.alive || a._hit.size === 0 && a._overlap.size === 0) continue;
       const [x, y] = a.p;
       buf.length = 0;
-      const near = this.hash.query(x, y, this.bound(a), buf);
+      const near = this.query(x, y, this.bound(a), buf);
       const now = /* @__PURE__ */ new Set();
       for (const b of near) {
         if (b === a || !b.alive) continue;
@@ -984,11 +1101,29 @@ var Scene = class {
     let w = 0;
     for (const e of this.entities) {
       if (e.alive) {
-        e._checkMoved(eps);
+        if (!e.opts.static) e._checkMoved(eps);
         this.entities[w++] = e;
-      } else g.renderer.detach(e);
+      } else {
+        g.renderer.detach(e);
+        if (e.opts.static) this.staticDirty = true;
+      }
     }
     this.entities.length = w;
+  }
+  /** Moving things are re-hashed every step; static ones only when they change. */
+  reindex() {
+    if (this.staticDirty) {
+      this.staticHash.clear();
+      for (const e of this.entities) if (e.alive && e.opts.static) this.staticHash.insert(e);
+      this.staticDirty = false;
+    }
+    this.hash.clear();
+    for (const e of this.entities) if (e.alive && !e.opts.static) this.hash.insert(e);
+  }
+  /** Everything whose cells touch a circle on the plane (moving and static). */
+  query(x, y, r, out = []) {
+    this.hash.query(x, y, r, out);
+    return this.staticHash.query(x, y, r, out);
   }
   bound(e) {
     if (e.box) return Math.max(e.box[0], e.is3d ? e.box[2] ?? e.box[0] : e.box[1]) * 0.5 * e.scale;
@@ -1246,6 +1381,16 @@ var Input = class {
     });
     addEventListener("blur", () => this.keys.clear());
     root.addEventListener("contextmenu", (e) => e.preventDefault());
+    root.addEventListener("wheel", (e) => {
+      this.wheelAcc += Math.sign(e.deltaY);
+      e.preventDefault();
+    }, { passive: false });
+    addEventListener("mousemove", (e) => {
+      if (document.pointerLockElement || this.freeLook) {
+        this.lookAcc.x += e.movementX;
+        this.lookAcc.y += e.movementY;
+      }
+    });
     root.addEventListener("pointermove", (e) => {
       if (e.pointerType === "touch") return;
       const r = root.getBoundingClientRect();
@@ -1255,8 +1400,8 @@ var Input = class {
       this.pointer.moved = true;
       if (this.using === "touch") this.using = "keys";
     });
-    root.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "touch") return;
+    root.addEventListener("mousedown", (e) => {
+      if (e.sourceCapabilities?.firesTouchEvents) return;
       const code = "mouse:" + e.button;
       this.keys.add(code);
       this.edgeDown.add(code);
@@ -1264,12 +1409,11 @@ var Input = class {
       this.using = "keys";
       this.fireAny();
     });
-    addEventListener("pointerup", (e) => {
-      if (e.pointerType === "touch") return;
+    addEventListener("mouseup", (e) => {
       const code = "mouse:" + e.button;
       this.keys.delete(code);
       this.edgeUp.add(code);
-      this.pointer.down = false;
+      if (e.buttons === 0) this.pointer.down = false;
     });
     root.addEventListener("touchstart", (e) => this.onTouch(e, "start"), { passive: false });
     root.addEventListener("touchmove", (e) => this.onTouch(e, "move"), { passive: false });
@@ -1284,6 +1428,8 @@ var Input = class {
   using = "keys";
   /** Pointer in canvas CSS pixels, plus world position (filled by the renderer). */
   pointer = { x: 0, y: 0, down: false, inside: false, moved: false, world: { x: 0, y: 0 } };
+  lookAcc = { x: 0, y: 0 };
+  wheelAcc = 0;
   keys = /* @__PURE__ */ new Set();
   edgeDown = /* @__PURE__ */ new Set();
   edgeUp = /* @__PURE__ */ new Set();
@@ -1298,6 +1444,8 @@ var Input = class {
   touchEl;
   anyHandlers = [];
   wantsAimStick = false;
+  /** Mouse look without pointer lock (when a page or frame refuses the lock). */
+  freeLook = false;
   /** Called once for any key, click, tap or pad button (used for "press to start"). */
   onAny(fn) {
     this.anyHandlers.push(fn);
@@ -1306,10 +1454,47 @@ var Input = class {
   fireAny() {
     for (const f of [...this.anyHandlers]) f();
   }
-  /** Bind extra keys to an action: input.bind("bomb", ["KeyB", "pad:3"]). */
-  bind(action, codes) {
+  /** Bind extra keys to an action: input.bind("bomb", ["KeyB", "pad:3"]). With { replace: true } the old keys go. */
+  bind(action, codes, o = {}) {
     const a = ALIASES[action] ?? action;
-    this.bindings[a] = [...this.bindings[a] ?? [], ...codes];
+    this.bindings[a] = o.replace ? [...codes] : [...this.bindings[a] ?? [], ...codes];
+  }
+  /** Lock the mouse to the game (needs a click or key press first). */
+  lockPointer() {
+    if (document.pointerLockElement || this.touch.on) return;
+    try {
+      const r = (this.root.querySelector("canvas") ?? this.root).requestPointerLock?.();
+      r?.catch?.(() => {
+      });
+    } catch {
+    }
+  }
+  get locked() {
+    return !!document.pointerLockElement;
+  }
+  /** Mouse movement since the last call (pixels), plus the right stick and the touch aim stick scaled to match. */
+  look(dt = 1 / 60) {
+    let x = this.lookAcc.x, y = this.lookAcc.y;
+    this.lookAcc.x = this.lookAcc.y = 0;
+    const p = this.pads[0];
+    if (p) {
+      const ax = p.axes[2] ?? 0, ay = p.axes[3] ?? 0;
+      if (len(ax, ay) > DEAD) {
+        x += ax * Math.abs(ax) * 900 * dt;
+        y += ay * Math.abs(ay) * 650 * dt;
+      }
+    }
+    if (this.touch.aim.id >= 0) {
+      x += (this.touch.aim.x - this.touch.aim.ox) / 50 * 700 * dt;
+      y += (this.touch.aim.y - this.touch.aim.oy) / 50 * 500 * dt;
+    }
+    return { x, y };
+  }
+  /** Mouse wheel steps since the last call (+1 down, -1 up). */
+  wheel() {
+    const w = this.wheelAcc;
+    this.wheelAcc = 0;
+    return w;
   }
   resolve(action) {
     const a = ALIASES[action] ?? action;
@@ -2605,7 +2790,7 @@ var Render2D = class {
 // src/render3d.ts
 import * as THREE from "three";
 
-// node_modules/three/examples/jsm/postprocessing/EffectComposer.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/EffectComposer.js
 import {
   HalfFloatType,
   NoBlending,
@@ -2614,7 +2799,7 @@ import {
   WebGLRenderTarget
 } from "three";
 
-// node_modules/three/examples/jsm/shaders/CopyShader.js
+// ../kimi-game/node_modules/three/examples/jsm/shaders/CopyShader.js
 var CopyShader = {
   name: "CopyShader",
   uniforms: {
@@ -2654,13 +2839,13 @@ var CopyShader = {
   )
 };
 
-// node_modules/three/examples/jsm/postprocessing/ShaderPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/ShaderPass.js
 import {
   ShaderMaterial,
   UniformsUtils
 } from "three";
 
-// node_modules/three/examples/jsm/postprocessing/Pass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/Pass.js
 import {
   BufferGeometry,
   Float32BufferAttribute,
@@ -2757,7 +2942,7 @@ var FullScreenQuad = class {
   }
 };
 
-// node_modules/three/examples/jsm/postprocessing/ShaderPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/ShaderPass.js
 var ShaderPass = class extends Pass {
   /**
    * Constructs a new shader pass.
@@ -2822,7 +3007,7 @@ var ShaderPass = class extends Pass {
   }
 };
 
-// node_modules/three/examples/jsm/postprocessing/MaskPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/MaskPass.js
 var MaskPass = class extends Pass {
   /**
    * Constructs a new mask pass.
@@ -2910,7 +3095,7 @@ var ClearMaskPass = class extends Pass {
   }
 };
 
-// node_modules/three/examples/jsm/postprocessing/EffectComposer.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/EffectComposer.js
 var EffectComposer = class {
   /**
    * Constructs a new effect composer.
@@ -3095,7 +3280,7 @@ var EffectComposer = class {
   }
 };
 
-// node_modules/three/examples/jsm/postprocessing/RenderPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/RenderPass.js
 import {
   Color
 } from "three";
@@ -3171,7 +3356,7 @@ var RenderPass = class extends Pass {
   }
 };
 
-// node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js
 import {
   AdditiveBlending,
   Color as Color3,
@@ -3184,7 +3369,7 @@ import {
   WebGLRenderTarget as WebGLRenderTarget2
 } from "three";
 
-// node_modules/three/examples/jsm/shaders/LuminosityHighPassShader.js
+// ../kimi-game/node_modules/three/examples/jsm/shaders/LuminosityHighPassShader.js
 import {
   Color as Color2
 } from "three";
@@ -3239,7 +3424,7 @@ var LuminosityHighPassShader = {
   )
 };
 
-// node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/UnrealBloomPass.js
 var UnrealBloomPass = class _UnrealBloomPass extends Pass {
   /**
    * Constructs a new Unreal Bloom pass.
@@ -3578,7 +3763,7 @@ var UnrealBloomPass = class _UnrealBloomPass extends Pass {
 UnrealBloomPass.BlurDirectionX = new Vector22(1, 0);
 UnrealBloomPass.BlurDirectionY = new Vector22(0, 1);
 
-// node_modules/three/examples/jsm/postprocessing/OutputPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/OutputPass.js
 import {
   ColorManagement,
   RawShaderMaterial,
@@ -3593,7 +3778,7 @@ import {
   SRGBTransfer
 } from "three";
 
-// node_modules/three/examples/jsm/shaders/OutputShader.js
+// ../kimi-game/node_modules/three/examples/jsm/shaders/OutputShader.js
 var OutputShader = {
   name: "OutputShader",
   uniforms: {
@@ -3681,7 +3866,7 @@ var OutputShader = {
   )
 };
 
-// node_modules/three/examples/jsm/postprocessing/OutputPass.js
+// ../kimi-game/node_modules/three/examples/jsm/postprocessing/OutputPass.js
 var OutputPass = class extends Pass {
   /**
    * Constructs a new output pass.
@@ -4170,19 +4355,22 @@ function starField(n) {
 var Render3D = class {
   constructor(g) {
     this.g = g;
+    const custom = g.opts.preset === "custom";
     const p = this.preset = PRESETS[g.opts.preset ?? "neon"] ?? PRESETS.neon;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    this.renderer = new THREE.WebGLRenderer({ antialias: !custom, powerPreference: "high-performance", stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = p.exposure;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.info.autoReset = false;
     this.canvas = this.renderer.domElement;
     g.root.prepend(this.canvas);
     this.cam = new THREE.PerspectiveCamera(55, 1, 0.1, 900);
-    this.scene.fog = new THREE.FogExp2(new THREE.Color(p.fog), p.fogDensity);
-    this.scene.add(skyDome(p.sky[1], p.sky[0]));
-    if (p.stars) this.scene.add(starField(1400));
+    if (!custom) {
+      this.scene.fog = new THREE.FogExp2(new THREE.Color(p.fog), p.fogDensity);
+      this.scene.add(skyDome(p.sky[1], p.sky[0]));
+      if (p.stars) this.scene.add(starField(1400));
+    }
     const hemi = new THREE.HemisphereLight(p.hemi[0], p.hemi[1], p.hemi[2]);
     this.sun = new THREE.DirectionalLight(p.sun[0], p.sun[1]);
     this.sun.position.set(18, 40, 12);
@@ -4191,10 +4379,10 @@ var Render3D = class {
     sc.left = sc.bottom = -45;
     sc.right = sc.top = 45;
     sc.far = 120;
-    this.scene.add(hemi, this.sun, this.sun.target);
+    if (!custom) this.scene.add(hemi, this.sun, this.sun.target);
     const b = g.bounds;
     const size = b.kind === "circle" ? b.r * 6 : Math.max(b.x1 - b.x0, b.y1 - b.y0) * 3;
-    if (g.opts.floor !== false && p.floor) {
+    if (g.opts.floor !== false && p.floor && !custom) {
       this.floor = gridFloor(Math.max(200, size), p.grid, p.floor, b.kind === "circle" ? b.r : 0);
       const u = this.floor.material.uniforms;
       u.uFog.value = new THREE.Color(p.fog);
@@ -4234,6 +4422,9 @@ var Render3D = class {
         self.modeCam = { kind: "fixed", pos, look };
         this.yaw = 0;
       },
+      manual() {
+        self.modeCam = { kind: "manual" };
+      },
       center(x, y) {
         this.fixed([x, 30, y + 18], [x, 0, y]);
       }
@@ -4262,6 +4453,8 @@ var Render3D = class {
   qualityMax = 3;
   frameMs = [];
   raisedOnce = false;
+  pipeline;
+  qualityFns = [];
   modeCam = { kind: "topdown", e: null, height: 22, distance: 14, lerp: 5, lead: 0.35 };
   camPos = new THREE.Vector3(0, 22, 14);
   camLook = new THREE.Vector3();
@@ -4287,6 +4480,11 @@ var Render3D = class {
       this.bloom = void 0;
     }
     this.resize();
+    for (const f of this.qualityFns) try {
+      f(q);
+    } catch (err) {
+      this.g._error(err);
+    }
   }
   resize() {
     const w = this.g.root.clientWidth || innerWidth, h = this.g.root.clientHeight || innerHeight;
@@ -4303,6 +4501,10 @@ var Render3D = class {
   }
   attach(e) {
     const o = e.opts;
+    if (o.hidden) {
+      e.visual = null;
+      return;
+    }
     let obj;
     if (o.mesh) obj = o.mesh;
     else {
@@ -4453,6 +4655,10 @@ var Render3D = class {
       }
     }
     const mc = this.modeCam;
+    if (mc.kind === "manual") {
+      this.renderFx(dt);
+      return;
+    }
     const k = 1 - Math.exp(-(mc.lerp ?? 5) * Math.max(dt, 1 / 240));
     const target = new THREE.Vector3();
     const look = new THREE.Vector3();
@@ -4500,6 +4706,11 @@ var Render3D = class {
     this.cam.rotateZ((Math.random() * 2 - 1) * sh * 0.05);
     this.sun.position.set(this.camLook.x + 18, 40, this.camLook.z + 12);
     this.sun.target.position.copy(this.camLook);
+    this.renderFx(dt);
+  }
+  /** Effects, the frame itself, and quality adaptation (also for a game that drives its own camera). */
+  renderFx(dt) {
+    const t = this.g.time;
     this.particles.update(dt);
     for (let i = this.beams.length - 1; i >= 0; i--) {
       const b = this.beams[i];
@@ -4530,7 +4741,8 @@ var Render3D = class {
       u.uT.value = t;
       u.uPulse.value = Math.max(0, u.uPulse.value - dt * 1.5);
     }
-    if (this.composer) this.composer.render(dt);
+    if (this.pipeline) this.pipeline(dt);
+    else if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam);
     this.adapt(dt);
   }
@@ -4538,17 +4750,39 @@ var Render3D = class {
   pulse(v = 0.6) {
     if (this.floor) this.floor.material.uniforms.uPulse.value = v;
   }
+  /** Replace the final draw with your own (your own EffectComposer, passes, scopes…). null restores the default. */
+  setPipeline(fn) {
+    this.pipeline = fn ?? void 0;
+  }
+  /** Called with the new level (0 low … 3 ultra) whenever quality changes, and once at once. */
+  onQuality(fn) {
+    this.qualityFns.push(fn);
+    fn(this.quality);
+  }
+  get level() {
+    return this.quality;
+  }
+  /** Set quality yourself (0..3); adaptive changes continue unless adaptive is false. */
+  setQuality(q) {
+    this.quality = Math.max(0, Math.min(3, Math.round(q)));
+    this.qualityMax = Math.max(this.qualityMax, this.quality);
+    this.applyQuality();
+  }
   adapt(dt) {
     if (this.g.state !== "play" && this.g.state !== "title") return;
+    const ad = this.g.opts.adaptive;
+    if (ad === false) return;
+    const lower = typeof ad === "object" ? ad.lowerAbove ?? 24 : 24;
+    const raise = typeof ad === "object" ? ad.raiseBelow ?? 11 : 11;
     this.frameMs.push(dt * 1e3 / Math.max(this.g.timeScale, 0.05));
     if (this.frameMs.length < 120) return;
     const real = this.g.frameMs;
     this.frameMs.length = 0;
-    if (real > 24 && this.quality > 0) {
+    if (real > lower && this.quality > 0) {
       this.quality--;
       this.applyQuality();
       this.g._note(`quality lowered to ${this.quality} (frame time ${real.toFixed(0)} ms)`);
-    } else if (real < 11 && this.quality < this.qualityMax && !this.raisedOnce) {
+    } else if (real < raise && this.quality < this.qualityMax && !this.raisedOnce) {
       this.raisedOnce = true;
       this.quality++;
       this.applyQuality();
@@ -4621,7 +4855,7 @@ async function highScores(game2) {
 }
 
 // src/game.ts
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 var STEP = 1 / 60;
 var Game = class {
   opts;
@@ -4696,6 +4930,14 @@ var Game = class {
     this.ui = new UI(this.root);
     this.renderer = this.mode === "3d" ? new Render3D(this) : new Render2D(this);
     this.input.onAny(() => sound.unlock());
+    if (opts.lockPointer) {
+      this.input.onAny(() => {
+        if (this.state === "play") this.input.lockPointer();
+      });
+      document.addEventListener("pointerlockchange", () => {
+        if (!document.pointerLockElement && this.state === "play") this.pause();
+      });
+    }
     this.reportOn = !!opts.report;
     addEventListener("keydown", (e) => {
       if (e.code === "KeyM" && !e.repeat) {
@@ -4764,6 +5006,7 @@ var Game = class {
     const s = new Scene(this, name, params);
     this.current = s;
     this.state = name === "title" ? "title" : "play";
+    if (this.opts.lockPointer && name !== "title") this.input.lockPointer();
     try {
       setup(s, params ?? {});
     } catch (err) {
@@ -4828,11 +5071,12 @@ var Game = class {
   pause() {
     if (this.state !== "play") return;
     this.state = "paused";
+    if (document.pointerLockElement) document.exitPointerLock?.();
     sound.muffle(0.9);
     const how = (this.opts.howto ?? this.defaultHowto()).map((l) => `<li>${keycaps(l)}</li>`).join("");
     this.ui.showCard(`<h1>Paused</h1><h3>${this.opts.title ?? ""}</h3><ul>${how}</ul><div class="kg-go">[P] to resume</div>`.replace("[P]", this.input.isTouch ? "Tap" : "P"));
     const off = this.input.onAny(() => {
-      if (this.input.isTouch) {
+      if (this.input.isTouch || this.opts.lockPointer && this.input.pointer.down) {
         off();
         this.resume();
       }
@@ -4842,6 +5086,7 @@ var Game = class {
   resume() {
     if (this.state !== "paused") return;
     this.state = "play";
+    if (this.opts.lockPointer) this.input.lockPointer();
     this.ui.hideCard();
     sound.muffle(this.timeScale < 1 ? 0.7 : 0);
     this.last = performance.now();
@@ -4875,7 +5120,21 @@ var Game = class {
   /** three.js objects for anything the engine does not do (3D only). */
   get three() {
     const r = this.renderer;
-    return r.is3d ? { THREE: r.THREE, scene: r.scene, camera: r.cam, renderer: r.renderer, pulse: (v) => r.pulse(v) } : null;
+    return r.is3d ? {
+      THREE: r.THREE,
+      scene: r.scene,
+      camera: r.cam,
+      renderer: r.renderer,
+      pulse: (v) => r.pulse(v),
+      /** Replace the final draw (your own composer and passes). */
+      setPipeline: (fn) => r.setPipeline(fn),
+      /** fn(level 0..3) now and whenever quality changes. */
+      onQuality: (fn) => r.onQuality(fn),
+      setQuality: (q) => r.setQuality(q),
+      get quality() {
+        return r.level;
+      }
+    } : null;
   }
   /** The 2D canvas context (2D only). */
   get ctx() {
@@ -5110,6 +5369,7 @@ export {
   load,
   overlap,
   raycast,
+  raycast3,
   rng,
   save,
   sound,

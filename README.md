@@ -20,6 +20,7 @@ Every call is the same in 2D and 3D: `sprite.ship()` is a vector ship on a canva
 | [`space-dodge`](examples/space-dodge/game.js) | 12 | The example from the top of [REFERENCE.md](REFERENCE.md), unchanged |
 | [`paddle-duel`](examples/paddle-duel/game.js) | 48 | 2D: mouse or keys, a computer that predicts bounces, particles, first to 7 |
 | [`nyota-arena`](examples/nyota-arena/game.js) | ~360 | 3D showcase, described below |
+| [`games/nyota-city`](games/nyota-city/README.md) | ~4,800 | An open-world third-person action game: a city you can enter, cars and boda-bodas, six weapons with a scope, gang and police AI, missions, day and night. Ships as a desktop app (Windows and Linux) and in KimiLM |
 
 Nyota Arena is a twin-stick arena game. It shows:
 - swarms that flock;
@@ -60,6 +61,15 @@ Play any example without a server: open `dist/play/<name>.html`. Each one is a s
 | ui | Score, text, bars, lives, timers, banners, floating popups, vignette and cards, sized for phones and large screens. |
 | report | Entities by tag and how many moved, collisions per second, frame and step time, input in use, render stats, warnings and errors. F3 shows it on screen; it is also posted to a parent window as `kimi-game:report`. |
 | storage | High scores through KimiLM's `kimi.storage`, then localStorage, then memory. |
+
+## 0.2: for big 3D games
+
+Nyota City needed the engine to step aside where a game wants its own look, and to scale to a whole city:
+- **Custom look:** preset `"custom"`, a manual camera, `setPipeline` for your own post-processing, and `onQuality` events.
+- **Input:** pointer-lock mouse look (`input.look()`, with a free-look fallback), the wheel, and replaceable bindings. Mouse buttons now use mouse events, so you can click to shoot while holding right-click to aim.
+- **3D raycasts:** `s.ray3` against boxes, standing capsules (with head shots) and spheres, through a hash broadphase.
+- **Colliders:** invisible colliders (`hidden`), and solids filtered by tag.
+- **Static things:** kept in their own hash, so a city of about 1,800 colliders costs little per step.
 
 ## Build and test
 

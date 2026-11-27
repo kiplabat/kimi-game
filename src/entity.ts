@@ -61,6 +61,10 @@ export interface EntityOpts {
   glow?: number;
   /** 3D height above the floor. */
   height?: number;
+  /** No visual at all (invisible colliders, triggers). */
+  hidden?: boolean;
+  /** 3D: a standing capsule [radius, height] for raycasts and the height check (people). */
+  capsule?: [number, number];
   /** Ignores slow motion (the player in bullet time). */
   unscaled?: boolean;
   /** Draw order in 2D (higher on top). */

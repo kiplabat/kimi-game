@@ -37,6 +37,8 @@ export interface CameraCtl {
   orbit(at: [number, number] | Entity, o?: { radius?: number; height?: number; speed?: number }): void;
   firstPerson(e: Entity, o?: { height?: number }): void;
   fixed(pos: number[], lookAt: number[]): void;
+  /** 3D: the game moves g.three.camera itself. */
+  manual?(): void;
   /** 2D: centre on a point. */
   center(x: number, y: number): void;
   zoom: number;

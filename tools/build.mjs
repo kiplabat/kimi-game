@@ -34,4 +34,31 @@ for (const name of readdirSync(join(root, "examples"))) {
     `<body><script type="module">${banner}\n${js}</script></body></html>\n`);
   console.log("dist/play/" + name + ".html", (js.length / 1024).toFixed(0) + " KB");
 }
+// full games (games/<name>/src/main.js) → dist/play/<name>.html, plus games/<name>/build/ (index.html + game.js)
+// for the desktop app and the KimiLM app, all offline: three.js, its addons and the engine are bundled in.
+if (existsSync(join(root, "games"))) {
+  for (const name of readdirSync(join(root, "games"))) {
+    const entry = join(root, "games", name, "src", "main.js");
+    if (!existsSync(entry)) continue;
+    const out = await esbuild.build({ entryPoints: [entry], bundle: true, format: "esm", target: "es2022", minify: true, write: false, plugins: [kimiAlias], logLevel: "warning", legalComments: "none" });
+    const js = out.outputFiles[0].text;
+    const title = (readFileSync(entry, "utf8").match(/title: "([^"]+)"/) ?? [, name])[1];
+    const head = `<!DOCTYPE html>\n<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">` +
+      `<title>${title}</title><style>html,body{margin:0;height:100%;background:#000;overflow:hidden}</style></head><body>`;
+    writeFileSync(join(root, "dist/play", name + ".html"), `${head}<script type="module">${banner}\n${js.replace(/<\/script/gi, "<\\/script")}</script></body></html>\n`);
+    const bdir = join(root, "games", name, "build");
+    mkdirSync(bdir, { recursive: true });
+    writeFileSync(join(bdir, "game.js"), banner + "\n" + js);
+    writeFileSync(join(bdir, "index.html"), `${head}<script type="module" src="./game.js"></script></body></html>\n`);
+    console.log("dist/play/" + name + ".html", (js.length / 1024).toFixed(0) + " KB");
+    // for KimiLM's Games: three.js and kimi/game come from KimiLM's import map (the engine it vendors)
+    const ext = { name: "kimilm-externals", setup(b) { b.onResolve({ filter: /^(three|kimi\/game)$/ }, (a) => ({ path: a.path, external: true })); } };
+    const k = await esbuild.build({ entryPoints: [entry], bundle: true, format: "esm", target: "es2022", minify: true, write: false, plugins: [ext], logLevel: "warning", legalComments: "none" });
+    const kdir = join(bdir, "kimilm");
+    mkdirSync(kdir, { recursive: true });
+    writeFileSync(join(kdir, "game.js"), banner + "\n" + k.outputFiles[0].text);
+    writeFileSync(join(kdir, "index.html"), `${head}<script type="module" src="./game.js"></script></body></html>\n`);
+    console.log("games/" + name + "/build/kimilm/game.js", (k.outputFiles[0].text.length / 1024).toFixed(0) + " KB (three.js and kimi/game from KimiLM)");
+  }
+}
 for (const f of ["kimi-game.js", "kimi-game.min.js"]) console.log("dist/" + f, (readFileSync(join(root, "dist", f)).length / 1024).toFixed(0) + " KB");

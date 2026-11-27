@@ -156,3 +156,32 @@ test("flocking keeps a swarm apart while it chases", () => {
   assert.ok(minD > 8, `spread out (closest pair ${minD.toFixed(1)})`);
   assert.ok(swarm.every((b) => b.x > 150), "and moved toward the target");
 });
+
+test("3D rays hit boxes, standing capsules (with head shots) and spheres", () => {
+  const s = new Scene(fakeGame("3d"), "t", {});
+  s.g.bounds = { kind: "circle", cx: 0, cy: 0, r: 500 };
+  const wall = place(s, { at: [10, 2, 0], box: [1, 4, 6], tags: ["wall"] });
+  const man = place(s, { at: [5, 0.9, 3], capsule: [0.4, 1.8], radius: 0.4, tags: ["person"] });
+  place(s, { at: [5, 1, -3], radius: 0.5, tags: ["thing"] });
+  s.step(1 / 60, 1 / 60);
+  const w = s.ray3([0, 1, 0], [1, 0, 0], 100, ["wall"]);
+  assert.ok(w && w.entity === wall && Math.abs(w.dist - 9.5) < 1e-6 && w.normal[0] === -1);
+  const body = s.ray3([0, 1, 3], [1, 0, 0], 100, ["person"]);
+  assert.ok(body && body.entity === man && body.part === "body" && Math.abs(body.dist - 4.6) < 1e-3);
+  const head = s.ray3([0, 1.65, 3], [1, 0, 0], 100, ["person"]);
+  assert.ok(head && head.part === "head");
+  assert.equal(s.ray3([0, 2.5, 3], [1, 0, 0], 100, ["person"]), null, "over the head");
+  const ball = s.ray3([0, 1, -3], [1, 0, 0], 100, ["thing"]);
+  assert.ok(ball && Math.abs(ball.dist - 4.5) < 1e-6);
+  assert.equal(s.ray3([0, 1, 0], [1, 0, 0], 5, ["wall"]), null, "out of range");
+});
+
+test("static things stay hashed without being re-added, and tag-filtered solids", () => {
+  const s = new Scene(fakeGame(), "t", {});
+  for (let i = 0; i < 200; i++) place(s, { at: [i * 30, 500], radius: 5, solid: true, static: true, tags: ["post"] });
+  const mover = place(s, { at: [30, 488], vel: [0, 100], radius: 5, solid: ["post"] });
+  for (let i = 0; i < 20; i++) s.step(1 / 60, 1 / 60);
+  assert.ok(mover.dist([30, 500]) >= 9.9, "stopped by the static post");
+  assert.ok(s.query(30, 500, 1).some((e) => e.has("post")), "found through the static hash");
+  assert.equal(s.within("post", [30, 500], 1).length, 1);
+});

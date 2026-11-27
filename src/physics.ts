@@ -18,7 +18,8 @@ function shapeOf(e: Entity) {
 /** Overlap test with the push-out normal (from b toward a) and depth, or null. */
 export function overlap(a: Entity, b: Entity): Contact | null {
   if (a.is3d) {
-    const ha = a.box ? a.box[1] / 2 : a.radius, hb = b.box ? b.box[1] / 2 : b.radius;
+    const half = (e: Entity) => (e.box ? e.box[1] / 2 : e.opts.capsule ? e.opts.capsule[1] / 2 : e.radius);
+    const ha = half(a), hb = half(b);
     if (Math.abs(a.y - b.y) > (ha + hb) * Math.max(a.scale, b.scale)) return null;
   }
   const A = shapeOf(a), B = shapeOf(b);
@@ -150,6 +151,94 @@ export function raycast(list: Entity[], from: [number, number], dir: [number, nu
     }
     if (t !== null && t <= max && (!best || t < best.dist)) {
       best = { entity: e, dist: t, point: [from[0] + dx * t, from[1] + dy * t] };
+    }
+  }
+  return best;
+}
+
+export interface Ray3Hit { entity: Entity; dist: number; point: [number, number, number]; normal: [number, number, number]; part: "head" | "body" | "box" | "sphere" }
+
+/**
+ * 3D ray against entities: boxes [w,h,d] centred on the entity, standing capsules ([radius, height]),
+ * otherwise spheres. `part` is "head" for the top of a capsule (head shots).
+ */
+export function raycast3(list: Entity[], from: [number, number, number], dir: [number, number, number], max: number, tags?: string[], ignore?: Entity | Entity[]): Ray3Hit | null {
+  const l = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const dx = dir[0] / l, dy = dir[1] / l, dz = dir[2] / l;
+  const ig = Array.isArray(ignore) ? ignore : ignore ? [ignore] : [];
+  let best: Ray3Hit | null = null;
+  let bestT = max;
+  for (const e of list) {
+    if (!e.alive || ig.includes(e)) continue;
+    if (tags && !tags.some((t) => e.tags.has(t))) continue;
+    // quick reject with a bounding sphere
+    const br = e.box ? Math.hypot(e.box[0], e.box[1], e.box[2] ?? e.box[0]) / 2 : e.opts.capsule ? e.opts.capsule[1] / 2 + 0.1 : e.radius;
+    const ox = e.x - from[0], oy = e.y - from[1], oz = e.z - from[2];
+    const proj = ox * dx + oy * dy + oz * dz;
+    if (proj < -br || proj - br > bestT) continue;
+    const d2 = ox * ox + oy * oy + oz * oz - proj * proj;
+    if (d2 > br * br) continue;
+    let t = -1, nx = 0, ny = 0, nz = 0;
+    let part: Ray3Hit["part"] = "sphere";
+    if (e.box) {
+      const hw = (e.box[0] * e.scale) / 2, hh = (e.box[1] * e.scale) / 2, hd = ((e.box[2] ?? e.box[0]) * e.scale) / 2;
+      const inv = (v: number) => (Math.abs(v) < 1e-12 ? 1e12 : 1 / v);
+      const ix = inv(dx), iy = inv(dy), iz = inv(dz);
+      const t1 = (e.x - hw - from[0]) * ix, t2 = (e.x + hw - from[0]) * ix;
+      const t3 = (e.y - hh - from[1]) * iy, t4 = (e.y + hh - from[1]) * iy;
+      const t5 = (e.z - hd - from[2]) * iz, t6 = (e.z + hd - from[2]) * iz;
+      const tx = Math.min(t1, t2), ty = Math.min(t3, t4), tz = Math.min(t5, t6);
+      const tmin = Math.max(tx, ty, tz);
+      const tmax = Math.min(Math.max(t1, t2), Math.max(t3, t4), Math.max(t5, t6));
+      if (tmax >= Math.max(0, tmin)) {
+        t = Math.max(0, tmin);
+        if (tmin === tx) nx = dx > 0 ? -1 : 1; else if (tmin === ty) ny = dy > 0 ? -1 : 1; else nz = dz > 0 ? -1 : 1;
+        part = "box";
+      }
+    } else if (e.opts.capsule) {
+      const [r, h] = e.opts.capsule;
+      const ya = e.y - h / 2 + r, yb = e.y + h / 2 - r;
+      // ray vs capsule (segment A-B along y)
+      const bax = 0, bay = yb - ya, baz = 0;
+      const oax = from[0] - e.x, oay = from[1] - ya, oaz = from[2] - e.z;
+      const baba = bay * bay, bard = bay * dy, baoa = bay * oay;
+      const rdoa = dx * oax + dy * oay + dz * oaz, oaoa = oax * oax + oay * oay + oaz * oaz;
+      const a = baba - bard * bard, b = baba * rdoa - baoa * bard, c = baba * oaoa - baoa * baoa - r * r * baba;
+      let h2 = b * b - a * c;
+      if (h2 >= 0 && a > 1e-9) {
+        const tt = (-b - Math.sqrt(h2)) / a;
+        const y = baoa + tt * bard;
+        if (y > 0 && y < baba && tt >= 0) t = tt;
+        else {
+          const ocy = y <= 0 ? oay : oay - bay;
+          const bb = dx * oax + dy * ocy + dz * oaz, cc = oax * oax + ocy * ocy + oaz * oaz - r * r;
+          h2 = bb * bb - cc;
+          if (h2 > 0) { const t2 = -bb - Math.sqrt(h2); if (t2 >= 0) t = t2; }
+        }
+      }
+      void bax; void baz;
+      if (t >= 0) {
+        const py = from[1] + dy * t;
+        part = py > e.y + h / 2 - r * 1.7 ? "head" : "body";
+        const cy = Math.max(ya, Math.min(yb, py));
+        const px = from[0] + dx * t - e.x, pz = from[2] + dz * t - e.z;
+        const nl = Math.hypot(px, py - cy, pz) || 1;
+        nx = px / nl; ny = (py - cy) / nl; nz = pz / nl;
+      }
+    } else {
+      const r = e.radius * e.scale;
+      const disc = proj * proj - (ox * ox + oy * oy + oz * oz - r * r);
+      if (disc >= 0) {
+        const t0 = proj - Math.sqrt(disc);
+        t = t0 >= 0 ? t0 : 0;
+        const px = from[0] + dx * t - e.x, py = from[1] + dy * t - e.y, pz = from[2] + dz * t - e.z;
+        const nl = Math.hypot(px, py, pz) || 1;
+        nx = px / nl; ny = py / nl; nz = pz / nl;
+      }
+    }
+    if (t >= 0 && t < bestT) {
+      bestT = t;
+      best = { entity: e, dist: t, point: [from[0] + dx * t, from[1] + dy * t, from[2] + dz * t], normal: [nx, ny, nz], part };
     }
   }
   return best;
