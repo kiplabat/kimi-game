@@ -10,7 +10,7 @@ import { Render2D, type Renderer, type Bounds } from "./renderer";
 import { Render3D } from "./render3d";
 import { addHighScore, highScores } from "./storage";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 const STEP = 1 / 60;
 
 export interface GameOpts {
@@ -30,8 +30,13 @@ export interface GameOpts {
   /** 2D backdrops. */
   backdrop?: "stars" | "grid" | "none";
   /** 3D look: neon, night, day, dusk, space. */
-  preset?: "neon" | "night" | "day" | "dusk" | "space";
+  /** "custom": no sky, lights, fog or floor: the game brings its own. */
+  preset?: "neon" | "night" | "day" | "dusk" | "space" | "custom";
   quality?: "auto" | "low" | "medium" | "high";
+  /** Adaptive quality: false to keep it fixed, or the frame times (ms) that lower or raise it. */
+  adaptive?: boolean | { lowerAbove?: number; raiseBelow?: number };
+  /** 3D mouse look: a click locks the pointer; unlocking it (Esc) pauses the game. Read deltas with g.input.look(). */
+  lockPointer?: boolean;
   bloom?: boolean;
   floor?: boolean;
   /** 3D: height of the plane the mouse aims on. */
@@ -128,6 +133,12 @@ export class Game {
     this.ui = new UI(this.root);
     this.renderer = this.mode === "3d" ? new Render3D(this) : new Render2D(this);
     this.input.onAny(() => sound.unlock());
+    if (opts.lockPointer) {
+      this.input.onAny(() => { if (this.state === "play") this.input.lockPointer(); });
+      document.addEventListener("pointerlockchange", () => {
+        if (!document.pointerLockElement && this.state === "play") this.pause();
+      });
+    }
     this.reportOn = !!opts.report;
 
     addEventListener("keydown", (e) => {
@@ -180,6 +191,7 @@ export class Game {
     const s = new Scene(this, name, params);
     this.current = s;
     this.state = name === "title" ? "title" : "play";
+    if (this.opts.lockPointer && name !== "title") this.input.lockPointer();
     try { setup(s, params ?? {}); } catch (err) { this._error(err); }
     this.input.refreshTouchButtons();
     this.emit("start", name);
@@ -247,15 +259,20 @@ export class Game {
   pause() {
     if (this.state !== "play") return;
     this.state = "paused";
+    if (document.pointerLockElement) document.exitPointerLock?.();
     sound.muffle(0.9);
     const how = (this.opts.howto ?? this.defaultHowto()).map((l) => `<li>${keycaps(l)}</li>`).join("");
     this.ui.showCard(`<h1>Paused</h1><h3>${this.opts.title ?? ""}</h3><ul>${how}</ul><div class="kg-go">[P] to resume</div>`.replace("[P]", this.input.isTouch ? "Tap" : "P"));
-    const off = this.input.onAny(() => { if (this.input.isTouch) { off(); this.resume(); } });
+    const off = this.input.onAny(() => {
+      // touch: any tap resumes; with pointer lock a click resumes (it is the gesture the lock needs)
+      if (this.input.isTouch || (this.opts.lockPointer && this.input.pointer.down)) { off(); this.resume(); }
+    });
     this.emit("pause");
   }
   resume() {
     if (this.state !== "paused") return;
     this.state = "play";
+    if (this.opts.lockPointer) this.input.lockPointer();
     this.ui.hideCard();
     sound.muffle(this.timeScale < 1 ? 0.7 : 0);
     this.last = performance.now();
@@ -282,7 +299,17 @@ export class Game {
   /** three.js objects for anything the engine does not do (3D only). */
   get three() {
     const r = this.renderer as Render3D;
-    return r.is3d ? { THREE: r.THREE, scene: r.scene, camera: r.cam, renderer: r.renderer, pulse: (v?: number) => r.pulse(v) } : null;
+    return r.is3d
+      ? {
+          THREE: r.THREE, scene: r.scene, camera: r.cam, renderer: r.renderer, pulse: (v?: number) => r.pulse(v),
+          /** Replace the final draw (your own composer and passes). */
+          setPipeline: (fn: ((dt: number) => void) | null) => r.setPipeline(fn),
+          /** fn(level 0..3) now and whenever quality changes. */
+          onQuality: (fn: (q: number) => void) => r.onQuality(fn),
+          setQuality: (q: number) => r.setQuality(q),
+          get quality() { return r.level; },
+        }
+      : null;
   }
   /** The 2D canvas context (2D only). */
   get ctx() { return (this.renderer as Render2D).ctx ?? null; }

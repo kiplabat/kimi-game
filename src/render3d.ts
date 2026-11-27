@@ -406,6 +406,8 @@ export class Render3D implements Renderer {
   private qualityMax = 3;
   private frameMs: number[] = [];
   private raisedOnce = false;
+  private pipeline?: (dt: number) => void;
+  private qualityFns: ((q: number) => void)[] = [];
   private modeCam: any = { kind: "topdown", e: null, height: 22, distance: 14, lerp: 5, lead: 0.35 };
   private camPos = new THREE.Vector3(0, 22, 14);
   private camLook = new THREE.Vector3();
@@ -413,29 +415,33 @@ export class Render3D implements Renderer {
   camera: CameraCtl;
 
   constructor(private g: Game) {
+    const custom = g.opts.preset === "custom";
     const p = (this.preset = PRESETS[g.opts.preset ?? "neon"] ?? PRESETS.neon);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    this.renderer = new THREE.WebGLRenderer({ antialias: !custom, powerPreference: "high-performance", stencil: false });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = p.exposure;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.info.autoReset = false;
     this.canvas = this.renderer.domElement;
     g.root.prepend(this.canvas);
     this.cam = new THREE.PerspectiveCamera(55, 1, 0.1, 900);
-    this.scene.fog = new THREE.FogExp2(new THREE.Color(p.fog), p.fogDensity);
-    this.scene.add(skyDome(p.sky[1], p.sky[0]));
-    if (p.stars) this.scene.add(starField(1400));
+    if (!custom) {
+      this.scene.fog = new THREE.FogExp2(new THREE.Color(p.fog), p.fogDensity);
+      this.scene.add(skyDome(p.sky[1], p.sky[0]));
+      if (p.stars) this.scene.add(starField(1400));
+    }
     const hemi = new THREE.HemisphereLight(p.hemi[0], p.hemi[1], p.hemi[2]);
     this.sun = new THREE.DirectionalLight(p.sun[0], p.sun[1]);
     this.sun.position.set(18, 40, 12);
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
     sc.left = sc.bottom = -45; sc.right = sc.top = 45; sc.far = 120;
-    this.scene.add(hemi, this.sun, this.sun.target);
+    // preset "custom": the game brings its own sky, lights and fog
+    if (!custom) this.scene.add(hemi, this.sun, this.sun.target);
     const b = g.bounds;
     const size = b.kind === "circle" ? b.r * 6 : Math.max(b.x1 - b.x0, b.y1 - b.y0) * 3;
-    if (g.opts.floor !== false && p.floor) {
+    if (g.opts.floor !== false && p.floor && !custom) {
       this.floor = gridFloor(Math.max(200, size), p.grid, p.floor, b.kind === "circle" ? b.r : 0);
       const u = (this.floor.material as THREE.ShaderMaterial).uniforms;
       u.uFog.value = new THREE.Color(p.fog);
@@ -461,6 +467,7 @@ export class Render3D implements Renderer {
       orbit(at, o = {}) { self.modeCam = { kind: "orbit", at, radius: o.radius ?? 30, height: o.height ?? 16, speed: o.speed ?? 0.12 }; },
       firstPerson(e, o = {}) { self.modeCam = { kind: "first", e, height: o.height ?? 1.6 }; },
       fixed(pos, look) { self.modeCam = { kind: "fixed", pos, look }; this.yaw = 0; },
+      manual() { self.modeCam = { kind: "manual" }; },
       center(x, y) { this.fixed([x, 30, y + 18], [x, 0, y]); },
     };
     this.resize();
@@ -486,6 +493,8 @@ export class Render3D implements Renderer {
       this.bloom = undefined;
     }
     this.resize();
+    // the game's own settings come last, so they win (shadows, pixel ratio, its own passes)
+    for (const f of this.qualityFns) try { f(q); } catch (err) { this.g._error(err); }
   }
 
   resize() {
@@ -505,6 +514,7 @@ export class Render3D implements Renderer {
   }
   attach(e: Entity) {
     const o = e.opts;
+    if (o.hidden) { e.visual = null; return; }
     let obj: THREE.Object3D;
     if (o.mesh) obj = o.mesh;
     else {
@@ -643,6 +653,7 @@ export class Render3D implements Renderer {
     }
     // camera
     const mc = this.modeCam;
+    if (mc.kind === "manual") { this.renderFx(dt); return; }
     const k = 1 - Math.exp(-(mc.lerp ?? 5) * Math.max(dt, 1 / 240));
     const target = new THREE.Vector3();
     const look = new THREE.Vector3();
@@ -690,7 +701,12 @@ export class Render3D implements Renderer {
     this.cam.rotateZ((Math.random() * 2 - 1) * sh * 0.05);
     this.sun.position.set(this.camLook.x + 18, 40, this.camLook.z + 12);
     this.sun.target.position.copy(this.camLook);
+    this.renderFx(dt);
+  }
 
+  /** Effects, the frame itself, and quality adaptation (also for a game that drives its own camera). */
+  private renderFx(dt: number) {
+    const t = this.g.time;
     // fx
     this.particles.update(dt);
     for (let i = this.beams.length - 1; i >= 0; i--) {
@@ -712,7 +728,8 @@ export class Render3D implements Renderer {
       u.uT.value = t;
       u.uPulse.value = Math.max(0, u.uPulse.value - dt * 1.5);
     }
-    if (this.composer) this.composer.render(dt);
+    if (this.pipeline) this.pipeline(dt);
+    else if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam);
     this.adapt(dt);
   }
@@ -722,17 +739,29 @@ export class Render3D implements Renderer {
     if (this.floor) (this.floor.material as THREE.ShaderMaterial).uniforms.uPulse.value = v;
   }
 
+  /** Replace the final draw with your own (your own EffectComposer, passes, scopes…). null restores the default. */
+  setPipeline(fn: ((dt: number) => void) | null) { this.pipeline = fn ?? undefined; }
+  /** Called with the new level (0 low … 3 ultra) whenever quality changes, and once at once. */
+  onQuality(fn: (q: number) => void) { this.qualityFns.push(fn); fn(this.quality); }
+  get level() { return this.quality; }
+  /** Set quality yourself (0..3); adaptive changes continue unless adaptive is false. */
+  setQuality(q: number) { this.quality = Math.max(0, Math.min(3, Math.round(q))); this.qualityMax = Math.max(this.qualityMax, this.quality); this.applyQuality(); }
+
   private adapt(dt: number) {
     if (this.g.state !== "play" && this.g.state !== "title") return;
+    const ad = this.g.opts.adaptive;
+    if (ad === false) return;
+    const lower = typeof ad === "object" ? ad.lowerAbove ?? 24 : 24;
+    const raise = typeof ad === "object" ? ad.raiseBelow ?? 11 : 11;
     this.frameMs.push(dt * 1000 / Math.max(this.g.timeScale, 0.05));
     if (this.frameMs.length < 120) return;
     const real = this.g.frameMs;
     this.frameMs.length = 0;
-    if (real > 24 && this.quality > 0) {
+    if (real > lower && this.quality > 0) {
       this.quality--;
       this.applyQuality();
       this.g._note(`quality lowered to ${this.quality} (frame time ${real.toFixed(0)} ms)`);
-    } else if (real < 11 && this.quality < this.qualityMax && !this.raisedOnce) {
+    } else if (real < raise && this.quality < this.qualityMax && !this.raisedOnce) {
       this.raisedOnce = true;
       this.quality++;
       this.applyQuality();

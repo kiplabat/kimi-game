@@ -1,0 +1,70 @@
+{
+  "name": "nyota-city",
+  "version": "0.1.0",
+  "description": "Nyota City: an open-world action game made with kimi/game on three.js. Runs offline.",
+  "author": "Kiplabat Tarus",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/kiplabat/kimi-game",
+  "main": "main.cjs",
+  "private": true,
+  "scripts": {
+    "prepare-app": "node prepare.cjs",
+    "start": "node prepare.cjs && electron .",
+    "dist": "node prepare.cjs && electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "39.8.10",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "io.kimios.nyotacity",
+    "productName": "Nyota City",
+    "executableName": "nyota-city",
+    "files": [
+      "main.cjs",
+      "app/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "compression": "maximum",
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Game",
+      "icon": "build/icon.png",
+      "synopsis": "Open-world action in Nyota City, offline",
+      "artifactName": "nyota-city-${version}-linux-x64.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "nyota-city-${version}-windows-x64.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Nyota City",
+      "artifactName": "nyota-city-${version}-windows-x64-setup.${ext}"
+    },
+    "publish": null
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiplabat/kimi-game"
+  }
+}

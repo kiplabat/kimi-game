@@ -15,7 +15,7 @@ export { UI } from "./ui";
 export { sound, type Music } from "./sound";
 export { ai } from "./ai";
 export { rng, clamp, lerp, angleDiff, TAU } from "./math";
-export { overlap, raycast } from "./physics";
+export { overlap, raycast, raycast3, type Ray3Hit } from "./physics";
 export { addHighScore, highScores, load, save } from "./storage";
 export { KITS, PRESETS } from "./render3d";
 export { SHAPES_2D } from "./renderer";
