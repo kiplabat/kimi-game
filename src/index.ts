@@ -18,6 +18,7 @@ export { rng, clamp, lerp, angleDiff, TAU } from "./math";
 export { overlap, raycast, raycast3, type Ray3Hit } from "./physics";
 export { addHighScore, highScores, load, save } from "./storage";
 export { KITS, PRESETS } from "./render3d";
+export { Instances, bake } from "./big";
 export { SHAPES_2D } from "./renderer";
 
 const SHAPES = [

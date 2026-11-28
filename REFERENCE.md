@@ -1,4 +1,4 @@
-# kimi/game reference (v0.2)
+# kimi/game reference (v0.3)
 
 A small game engine. Write the game in one module script. You can use the same calls in 2D (canvas) and 3D (three.js). Keys, mouse, touch and gamepads, the title card, pause, game over, high scores, sound and the report all come built in.
 
@@ -146,6 +146,12 @@ Entity options:
 - `capsule: [r, h]` for people (enables head shots).
 - `hidden: true` for invisible colliders.
 - `static: true` things are hashed once, so thousands of walls are cheap.
+
+## Big worlds (v0.3)
+- `g.three.instances(geometry, material, { far })`, then `.add(x, y, z, { scale, rotY, color })`: thousands of copies in one draw, only those in view.
+- `g.three.bake(group)` merges static meshes per material per 64 m cell.
+- Entity `cull: m` (or `g.three.cullDistance`) hides far meshes.
+- Adaptive quality lowers resolution first; your own pipeline reads it with `g.three.onScale(fn)`.
 
 ## Rules for good games
 - Tag everything that collides. Use `on("hit")` for events and `solid` only for things that must block.

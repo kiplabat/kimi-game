@@ -1,4 +1,4 @@
-// Builds Nyota City: ground, towers (instanced, shader facades), buildings you can walk into
+// Builds Sundown City: ground, towers (instanced, shader facades), buildings you can walk into
 // (merged walls with real door gaps, interiors with props and lights), a parking garage with a
 // ramp to its roof, compounds, a plaza, parks, street furniture, and the colliders, surfaces,
 // cover points and navigation grid that the people in it use.
@@ -8,11 +8,13 @@ import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.j
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { rng } from "kimi/game";
 import { N, HALF, PITCH, LOT, WALK, roadCentre, blockCentre, USE, PLACES, hash2 } from "./layout.js";
-import { groundMaterial, facadeMaterial, STYLE_WALL, M, adTexture, AD_COUNT, canvasTexture } from "./materials.js";
+import { groundMaterial, facadeMaterial, STYLE_WALL, M, mat, adTexture, AD_COUNT, canvasTexture, bakeCityMap } from "./materials.js";
 
 // ---------------------------------------------------------------------------
-// Geometry builder: boxes and quads with world-scaled UVs, sorted by material.
+// Geometry builder: boxes and quads with world-scaled UVs, sorted by material and by a
+// 144 m cell of the ground, so a street is a few draw calls and cells off screen are skipped.
 // ---------------------------------------------------------------------------
+const CELL = 144;
 class Builder {
   constructor() { this.parts = new Map(); }
   part(key) {
@@ -21,7 +23,8 @@ class Builder {
     return p;
   }
   quad(key, a, b, c, d, n, tile = 2) {
-    const p = this.part(key);
+    const cx = Math.floor((a[0] + c[0]) / 2 / CELL), cz = Math.floor((a[2] + c[2]) / 2 / CELL);
+    const p = this.part(key + "@" + cx + "," + cz);
     const base = p.pos.length / 3;
     for (const v of [a, b, c, d]) {
       p.pos.push(v[0], v[1], v[2]);
@@ -52,7 +55,8 @@ class Builder {
   }
   meshes(materials) {
     const out = [];
-    for (const [key, p] of this.parts) {
+    for (const [full, p] of this.parts) {
+      const key = full.split("@")[0];
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(p.pos, 3));
       g.setAttribute("normal", new THREE.Float32BufferAttribute(p.nrm, 3));
@@ -71,26 +75,15 @@ class Builder {
 // ---------------------------------------------------------------------------
 // Instanced things
 // ---------------------------------------------------------------------------
+// The engine draws these: one draw call per kind, only the copies the camera can see
+// (or near enough to throw a shadow into view), and none past the kind's distance.
 class Instancer {
-  constructor(geometry, material, opts = {}) {
-    this.geometry = geometry; this.material = material; this.list = []; this.opts = opts;
+  constructor(g, geometry, material, opts = {}) {
+    this.i = g.three.instances(geometry, material, { shadow: opts.shadow !== false, far: opts.far ?? 300, near: opts.near ?? 35 });
+    this.farK = opts.farK ?? 1; // share of the view distance this kind is drawn to
   }
-  add(x, y, z, sx = 1, sy = 1, sz = 1, rotY = 0, color = null) { this.list.push({ x, y, z, sx, sy, sz, rotY, color }); }
-  build() {
-    const im = new THREE.InstancedMesh(this.geometry, this.material, Math.max(1, this.list.length));
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
-    this.list.forEach((t, i) => {
-      q.setFromEuler(e.set(0, t.rotY, 0));
-      m.compose(new THREE.Vector3(t.x, t.y, t.z), q, new THREE.Vector3(t.sx, t.sy, t.sz));
-      im.setMatrixAt(i, m);
-      if (t.color) im.setColorAt(i, new THREE.Color(...t.color));
-    });
-    im.count = this.list.length;
-    im.castShadow = this.opts.shadow !== false;
-    im.receiveShadow = true;
-    im.computeBoundingSphere();
-    return im;
-  }
+  add(x, y, z, sx = 1, sy = 1, sz = 1, rotY = 0, color = null) { this.i.add(x, y, z, { scale: [sx, sy, sz], rotY, color: color ?? undefined }); }
+  setView(view) { this.i.opts.far = view * this.farK; }
 }
 const unitBox = () => { const g = new THREE.BoxGeometry(1, 1, 1); g.translate(0, 0.5, 0); return g; };
 
@@ -114,11 +107,12 @@ export class World {
     this.lampLights = [];    // positions of street lamps (for the pool of real lights)
     this.colliders = [];
     this.inst = {
-      glass: new Instancer(unitBox(), facadeMaterial("glass")),
-      concrete: new Instancer(unitBox(), facadeMaterial("concrete")),
-      plaster: new Instancer(unitBox(), facadeMaterial("plaster")),
-      brick: new Instancer(unitBox(), facadeMaterial("brick")),
+      glass: new Instancer(g, unitBox(), facadeMaterial("glass"), { farK: 1.15, near: 90 }),
+      concrete: new Instancer(g, unitBox(), facadeMaterial("concrete"), { farK: 1.15, near: 90 }),
+      plaster: new Instancer(g, unitBox(), facadeMaterial("plaster"), { farK: 1.15, near: 90 }),
+      brick: new Instancer(g, unitBox(), facadeMaterial("brick"), { farK: 1.15, near: 90 }),
     };
+    this.statics = new THREE.Group(); // one-off meshes (billboards, kiosks, fountains…), baked by cell at the end
     this.props = {};
     this.build();
   }
@@ -188,14 +182,21 @@ export class World {
     };
     this.sky.lamps.push(mats.lamp, mats.ceilLamp);
     for (const m of this.b.meshes(mats)) three.add(m);
-    for (const [k, inst] of Object.entries(this.inst)) { const im = inst.build(); im.name = "towers-" + k; three.add(im); }
-    for (const [k, inst] of Object.entries(this.props)) { const im = inst.build(); im.name = "props-" + k; three.add(im); }
+    three.add(this.statics);
+    this.baked = this.g.three.bake(this.statics, { cell: CELL });
     this.buildNav();
+    this.cityMap = bakeCityMap(this);
+  }
+
+  /** How far each kind of thing is drawn: called when the view distance changes with quality. */
+  setView(view) {
+    for (const i of Object.values(this.inst)) i.setView(view);
+    for (const i of Object.values(this.props)) i.setView(view);
   }
 
   /** An instanced prop kind, made once (mat may be a function so it is only built the first time). */
-  prop(name, make, mat, opts) {
-    if (!this.props[name]) this.props[name] = new Instancer(make(), typeof mat === "function" ? mat() : mat, opts);
+  prop(name, make, mat, opts = {}) {
+    if (!this.props[name]) this.props[name] = new Instancer(this.g, make(), typeof mat === "function" ? mat() : mat, { farK: 0.6, ...opts });
     return this.props[name];
   }
 
@@ -209,7 +210,7 @@ export class World {
     this.solid(x0, y0, z0, x1, y0 + h, z1, ["wall", "building"]);
     // rooftop things
     if (h < 45 && w > 8 && d > 8) {
-      const ac = this.prop("ac", () => { const g = new RoundedBoxGeometry(1, 1, 1, 2, 0.08); g.translate(0, 0.5, 0); return g; }, M.metal());
+      const ac = this.prop("ac", () => unitBox(), M.metal(), { farK: 0.5 });
       const n = 1 + Math.floor(this.r.next() * 3);
       for (let k = 0; k < n; k++) ac.add(x0 + 2 + this.r.next() * (w - 4), y0 + h, z0 + 2 + this.r.next() * (d - 4), 1.6, 1.1, 1.2);
       if (this.r.next() < 0.45) {
@@ -242,7 +243,7 @@ export class World {
     frame.add(panel, back, legs, legs2);
     frame.position.set(x, y, z);
     frame.traverse((o) => { o.castShadow = true; });
-    this.three.add(frame);
+    this.statics.add(frame);
   }
 
   /**
@@ -338,7 +339,7 @@ export class World {
     const trunk = this.prop("trunk", () => { const g = new THREE.CylinderGeometry(0.16, 0.26, 1, 7); g.translate(0, 0.5, 0); return g; }, M.trunk());
     trunk.add(x, 0, z, s, 3.2 * s, s);
     const crown = this.prop("crown", () => {
-      // acacia-like flat crowns and rounder ones, displaced for a hand-made look
+      // flat crowns and rounder ones, displaced for a hand-made look
       const parts = [];
       for (let k = 0; k < 3; k++) {
         const g = new THREE.IcosahedronGeometry(1, 1);
@@ -354,6 +355,7 @@ export class World {
     }, M.foliage());
     crown.add(x, 0, z, s * 1.25, s, s * 1.25, hash2(x, z) * 6.28, [0.75 + hash2(z, x) * 0.4, 0.85 + hash2(x + 1, z) * 0.3, 0.7]);
     this.post(x, z, 0.3 * s, 3.5, ["prop", "tree"]);
+    (this.treeSpots ??= []).push([x, z, s]);
   }
   lamp(x, z, rot) {
     const pole = this.prop("lampPole", () => {
@@ -378,11 +380,11 @@ export class World {
     b.add(x, 0, z, 1, 1, 1, rot);
   }
   kiosk(x, z, rot, color) {
-    // a market kiosk: counter, posts and a sloped mabati roof
+    // a market kiosk: counter, posts and a sloped tin roof
     const g = new THREE.Group();
     const counter = new THREE.Mesh(new THREE.BoxGeometry(3, 1.05, 1.4), M.wood());
     counter.position.y = 0.52;
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.06, 2.6), new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.6 }));
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.06, 2.6), mat("kioskRoof" + color, () => new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.6 })));
     roof.position.set(0, 2.5, 0.2); roof.rotation.x = 0.15;
     g.add(counter, roof);
     for (const px of [-1.6, 1.6]) for (const pz of [-0.9, 1.2]) {
@@ -391,12 +393,13 @@ export class World {
     }
     // goods on the counter
     for (let k = 0; k < 6; k++) {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.25, 0.3), new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hash2(x + k, z), 0.7, 0.5), roughness: 0.6 }));
+      const hue = Math.floor(hash2(x + k, z) * 8) / 8;
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.25, 0.3), mat("goods" + hue, () => new THREE.MeshStandardMaterial({ color: new THREE.Color().setHSL(hue, 0.7, 0.5), roughness: 0.6 })));
       box.position.set(-1.2 + k * 0.48, 1.18, -0.2); g.add(box);
     }
     g.position.set(x, 0, z); g.rotation.y = rot;
     g.traverse((o) => { o.castShadow = o.receiveShadow = true; });
-    this.three.add(g);
+    this.statics.add(g);
     const c = Math.abs(Math.sin(rot)) > 0.5;
     this.solid(x - (c ? 0.7 : 1.5), 0, z - (c ? 1.5 : 0.7), x + (c ? 0.7 : 1.5), 1.05, z + (c ? 1.5 : 0.7), ["prop", "cover"]);
   }
@@ -462,7 +465,7 @@ export class World {
     water.rotation.x = -Math.PI / 2; water.position.set(x, 0.55, z);
     const col = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.6, 2.4, 12), M.concrete());
     col.position.set(x, 1.2, z);
-    for (const m of [rim, water, col]) { m.castShadow = m.receiveShadow = true; this.three.add(m); }
+    for (const m of [rim, water, col]) { m.castShadow = m.receiveShadow = true; this.statics.add(m); }
     this.solid(x - r, 0, z - r, x + r, 0.8, z + r, ["prop"]);
     this.post(x, z, 0.6, 2.4, ["prop"]);
     this.fountains = [...(this.fountains ?? []), [x, z]];
@@ -476,7 +479,7 @@ export class World {
     obelisk.position.set(cx, 8.2, cz); obelisk.rotation.y = Math.PI / 4;
     const star = new THREE.Mesh(new THREE.OctahedronGeometry(0.9), (() => { const m = new THREE.MeshStandardMaterial({ color: 0xffd166, emissive: 0xffd166, emissiveIntensity: 0, metalness: 0.8, roughness: 0.2 }); m.userData.night = 3; this.sky.lamps.push(m); return m; })());
     star.position.set(cx, 15.8, cz);
-    for (const m of [base, obelisk, star]) { m.castShadow = m.receiveShadow = true; this.three.add(m); }
+    for (const m of [base, obelisk, star]) { m.castShadow = m.receiveShadow = true; this.statics.add(m); }
     this.solid(cx - 3, 0, cz - 3, cx + 3, 1.2, cz + 3, ["prop", "cover"]);
     this.post(cx, cz, 1.1, 15, ["prop"]);
     const colors = [0xd62828, 0x2a9d8f, 0xf4a261, 0x457b9d, 0xe9c46a, 0x6a4c93];
@@ -602,7 +605,7 @@ export class World {
   }
 
   gangTower(cx, cz, x0, z0, x1, z1) {
-    // Kivuli's tower: an enterable glass lobby with the tower standing on top of it
+    // Viper Tower: an enterable glass lobby with the tower standing on top of it
     const lx0 = cx - 15, lx1 = cx + 15, lz0 = cz - 12, lz1 = cz + 14, H = 6.5;
     const room = this.room(lx0, lz0, lx1, lz1, H, [{ side: "s", at: 0, width: 4 }, { side: "n", at: 8, width: 2.4 }], { facade: "lobbyFacade", inside: "concrete", floor: "tile", glassSide: "s", name: "lobby" });
     this.tower(lx0, lz0, lx1, lz1, 70, "glass", H + 0.4);
@@ -619,7 +622,7 @@ export class World {
   }
 
   streets() {
-    // lamps and trees along every road, bollards at corners, bus/matatu stages
+    // lamps and trees along every road, bollards at corners, bus stops
     for (let i = 0; i <= N; i++) {
       const c = roadCentre(i);
       for (let k = 0; k < N; k++) {
@@ -637,7 +640,7 @@ export class World {
         }
       }
     }
-    // matatu stages: shelters at a few corners
+    // bus stops: shelters at a few corners
     for (const [i, j] of [[2, 3], [4, 5], [5, 2], [3, 6], [6, 4]]) {
       const x = roadCentre(i) + 9, z = blockCentre(j);
       this.b.box(x - 0.6, 0, z - 3, x + 0.6, 0.1, z + 3, "metal");
@@ -658,7 +661,7 @@ export class World {
   }
 
   mountains() {
-    // the Ngong-like hills on the horizon: low-poly ridges beyond the fog's reach (not fogged)
+    // hills on the horizon: low-poly ridges beyond the fog's reach (not fogged)
     const g = new THREE.BufferGeometry();
     const pos = [];
     const R1 = 1500, R2 = 1900, n = 90;

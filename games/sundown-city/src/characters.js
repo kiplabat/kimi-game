@@ -140,7 +140,22 @@ function piece(geo, mat, x, y, z, rz = 0) { const m = new THREE.Mesh(geo, mat); 
 const bx = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const cyl = (r, l) => { const g = new THREE.CylinderGeometry(r, r, l, 10); g.rotateZ(Math.PI / 2); return g; };
 
+// Each weapon is built once from its parts, merged into one mesh per material, then shared:
+// a gun in someone's hands costs two or three draw calls, not six.
+const weaponCache = new Map();
 export function weaponModel(kind) {
+  let proto = weaponCache.get(kind);
+  if (!proto) { proto = buildWeapon(kind); weaponCache.set(kind, proto); }
+  const g = new THREE.Group();
+  for (const [geo, mat] of proto.parts) { const m = new THREE.Mesh(geo, mat); m.castShadow = true; g.add(m); }
+  const muzzle = new THREE.Object3D();
+  muzzle.name = "muzzle";
+  muzzle.position.copy(proto.muzzle);
+  g.add(muzzle);
+  g.userData.muzzle = muzzle;
+  return g;
+}
+function buildWeapon(kind) {
   const g = new THREE.Group();
   const muzzle = new THREE.Object3D();
   muzzle.name = "muzzle";
@@ -169,9 +184,14 @@ export function weaponModel(kind) {
     g.add(piece(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshStandardMaterial({ color: 0x3d4a2a, roughness: 0.6 }), 0, 0, 0));
     muzzle.position.set(0.05, 0, 0);
   }
-  g.add(muzzle);
-  g.userData.muzzle = muzzle;
-  return g;
+  const by = new Map();
+  for (const m of g.children) {
+    m.updateMatrix();
+    const geo = m.geometry.clone().applyMatrix4(m.matrix);
+    if (!by.has(m.material)) by.set(m.material, []);
+    by.get(m.material).push(geo.index ? geo.toNonIndexed() : geo);
+  }
+  return { parts: [...by].map(([mat, list]) => [mergeGeometries(list), mat]), muzzle: muzzle.position.clone() };
 }
 
 // ---------------------------------------------------------------------------

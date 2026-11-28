@@ -1,4 +1,4 @@
-/* kimi/game 0.2.0 — Apache-2.0 — https://github.com/kiplabat/kimi-game. Built on three.js (MIT). */
+/* kimi/game 0.3.0 — Apache-2.0 — https://github.com/kiplabat/kimi-game. Built on three.js (MIT). */
 
 // src/entity.ts
 var NEXT_ID = 1;
@@ -2300,7 +2300,7 @@ var rr = (c, x, y, w, h, r) => {
 };
 var polyCache = /* @__PURE__ */ new Map();
 var SHAPES_2D = {
-  ship(c, _e, r, col, col2) {
+  ship(c, _e2, r, col, col2) {
     c.fillStyle = col;
     c.beginPath();
     c.moveTo(r * 1.25, 0);
@@ -2336,7 +2336,7 @@ var SHAPES_2D = {
     c.fill();
     c.stroke();
   },
-  ball(c, _e, r, col) {
+  ball(c, _e2, r, col) {
     c.fillStyle = col;
     c.beginPath();
     c.arc(0, 0, r, 0, Math.PI * 2);
@@ -2375,7 +2375,7 @@ var SHAPES_2D = {
     c.arc(0, 0, r * 0.62, 0, Math.PI * 2);
     c.stroke();
   },
-  bullet(c, _e, r, col) {
+  bullet(c, _e2, r, col) {
     c.fillStyle = col;
     rr(c, -r * 1.8, -r * 0.6, r * 3.6, r * 1.2, r * 0.6);
     c.fill();
@@ -2411,7 +2411,7 @@ var SHAPES_2D = {
     c.arc(0, 0, r * 0.5, 0, Math.PI * 2);
     c.fill();
   },
-  orb(c, _e, r, col) {
+  orb(c, _e2, r, col) {
     const gr = c.createRadialGradient(0, 0, 0, 0, 0, r);
     gr.addColorStop(0, "#fff");
     gr.addColorStop(0.35, col);
@@ -2421,7 +2421,7 @@ var SHAPES_2D = {
     c.arc(0, 0, r, 0, Math.PI * 2);
     c.fill();
   },
-  crystal(c, _e, r, col, col2) {
+  crystal(c, _e2, r, col, col2) {
     c.fillStyle = col;
     c.beginPath();
     c.moveTo(r, 0);
@@ -2452,7 +2452,7 @@ var SHAPES_2D = {
     c.fill();
     c.restore();
   },
-  car(c, _e, r, col, col2) {
+  car(c, _e2, r, col, col2) {
     c.fillStyle = col;
     rr(c, -r * 1.1, -r * 0.6, r * 2.2, r * 1.2, r * 0.35);
     c.fill();
@@ -2460,7 +2460,7 @@ var SHAPES_2D = {
     rr(c, -r * 0.2, -r * 0.45, r * 0.75, r * 0.9, r * 0.2);
     c.fill();
   },
-  tree(c, _e, r, col, col2) {
+  tree(c, _e2, r, col, col2) {
     c.fillStyle = col2;
     c.fillRect(-r * 0.15, 0, r * 0.3, r);
     c.fillStyle = col;
@@ -2504,7 +2504,7 @@ var SHAPES_2D = {
     c.closePath();
     c.fill();
   },
-  circle(c, _e, r, col) {
+  circle(c, _e2, r, col) {
     c.fillStyle = col;
     c.beginPath();
     c.arc(0, 0, r, 0, Math.PI * 2);
@@ -2788,7 +2788,7 @@ var Render2D = class {
 };
 
 // src/render3d.ts
-import * as THREE from "three";
+import * as THREE2 from "three";
 
 // ../kimi-game/node_modules/three/examples/jsm/postprocessing/EffectComposer.js
 import {
@@ -3932,6 +3932,408 @@ var OutputPass = class extends Pass {
   }
 };
 
+// src/big.ts
+import * as THREE from "three";
+
+// ../kimi-game/node_modules/three/examples/jsm/utils/BufferGeometryUtils.js
+import {
+  BufferAttribute,
+  BufferGeometry as BufferGeometry2,
+  Float32BufferAttribute as Float32BufferAttribute2,
+  InstancedBufferAttribute,
+  InterleavedBuffer,
+  InterleavedBufferAttribute,
+  MathUtils,
+  TriangleFanDrawMode,
+  TriangleStripDrawMode,
+  TrianglesDrawMode,
+  Vector3 as Vector32
+} from "three";
+function mergeGeometries(geometries, useGroups = false) {
+  const isIndexed = geometries[0].index !== null;
+  const attributesUsed = new Set(Object.keys(geometries[0].attributes));
+  const morphAttributesUsed = new Set(Object.keys(geometries[0].morphAttributes));
+  const attributes = {};
+  const morphAttributes = {};
+  const morphTargetsRelative = geometries[0].morphTargetsRelative;
+  const mergedGeometry = new BufferGeometry2();
+  mergedGeometry.morphTargetsRelative = morphTargetsRelative;
+  let offset = 0;
+  for (let i = 0; i < geometries.length; ++i) {
+    const geometry = geometries[i];
+    let attributesCount = 0;
+    let morphAttributesCount = 0;
+    if (isIndexed !== (geometry.index !== null)) {
+      console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". All geometries must have compatible attributes; make sure index attribute exists among all geometries, or in none of them.");
+      return null;
+    }
+    for (const name in geometry.attributes) {
+      if (!attributesUsed.has(name)) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + '. All geometries must have compatible attributes; make sure "' + name + '" attribute exists among all geometries, or in none of them.');
+        return null;
+      }
+      if (attributes[name] === void 0) attributes[name] = [];
+      attributes[name].push(geometry.attributes[name]);
+      attributesCount++;
+    }
+    if (attributesCount !== attributesUsed.size) {
+      console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". Make sure all geometries have the same number of attributes.");
+      return null;
+    }
+    if (morphTargetsRelative !== geometry.morphTargetsRelative) {
+      console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". .morphTargetsRelative must be consistent throughout all geometries.");
+      return null;
+    }
+    for (const name in geometry.morphAttributes) {
+      if (!morphAttributesUsed.has(name)) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ".  .morphAttributes must be consistent throughout all geometries.");
+        return null;
+      }
+      if (geometry.morphAttributes[name].length !== geometries[0].morphAttributes[name].length) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + '. All geometries must have the same number of morph targets for the "' + name + '" morph attribute.');
+        return null;
+      }
+      if (morphAttributes[name] === void 0) morphAttributes[name] = [];
+      morphAttributes[name].push(geometry.morphAttributes[name]);
+      morphAttributesCount++;
+    }
+    if (morphAttributesCount !== morphAttributesUsed.size) {
+      console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". Make sure all geometries have the same number of morph attributes.");
+      return null;
+    }
+    if (useGroups) {
+      let count;
+      if (isIndexed) {
+        count = geometry.index.count;
+      } else if (geometry.attributes.position !== void 0) {
+        count = geometry.attributes.position.count;
+      } else {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed with geometry at index " + i + ". The geometry must have either an index or a position attribute");
+        return null;
+      }
+      mergedGeometry.addGroup(offset, count, i);
+      offset += count;
+    }
+  }
+  if (isIndexed) {
+    let indexOffset = 0;
+    const mergedIndex = [];
+    for (let i = 0; i < geometries.length; ++i) {
+      const index = geometries[i].index;
+      for (let j = 0; j < index.count; ++j) {
+        mergedIndex.push(index.getX(j) + indexOffset);
+      }
+      indexOffset += geometries[i].attributes.position.count;
+    }
+    mergedGeometry.setIndex(mergedIndex);
+  }
+  for (const name in attributes) {
+    const mergedAttribute = mergeAttributes(attributes[name]);
+    if (!mergedAttribute) {
+      console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " attribute.");
+      return null;
+    }
+    mergedGeometry.setAttribute(name, mergedAttribute);
+  }
+  for (const name in morphAttributes) {
+    const numMorphTargets = morphAttributes[name][0].length;
+    if (numMorphTargets === 0) continue;
+    mergedGeometry.morphAttributes = mergedGeometry.morphAttributes || {};
+    mergedGeometry.morphAttributes[name] = [];
+    for (let i = 0; i < numMorphTargets; ++i) {
+      const morphAttributesToMerge = [];
+      for (let j = 0; j < morphAttributes[name].length; ++j) {
+        morphAttributesToMerge.push(morphAttributes[name][j][i]);
+      }
+      const mergedMorphAttribute = mergeAttributes(morphAttributesToMerge);
+      if (!mergedMorphAttribute) {
+        console.error("THREE.BufferGeometryUtils: .mergeGeometries() failed while trying to merge the " + name + " morphAttribute.");
+        return null;
+      }
+      mergedGeometry.morphAttributes[name].push(mergedMorphAttribute);
+    }
+  }
+  return mergedGeometry;
+}
+function mergeAttributes(attributes) {
+  let TypedArray;
+  let itemSize;
+  let normalized;
+  let gpuType = -1;
+  let arrayLength = 0;
+  for (let i = 0; i < attributes.length; ++i) {
+    const attribute = attributes[i];
+    if (TypedArray === void 0) TypedArray = attribute.array.constructor;
+    if (TypedArray !== attribute.array.constructor) {
+      console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.array must be of consistent array types across matching attributes.");
+      return null;
+    }
+    if (itemSize === void 0) itemSize = attribute.itemSize;
+    if (itemSize !== attribute.itemSize) {
+      console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.itemSize must be consistent across matching attributes.");
+      return null;
+    }
+    if (normalized === void 0) normalized = attribute.normalized;
+    if (normalized !== attribute.normalized) {
+      console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.normalized must be consistent across matching attributes.");
+      return null;
+    }
+    if (gpuType === -1) gpuType = attribute.gpuType;
+    if (gpuType !== attribute.gpuType) {
+      console.error("THREE.BufferGeometryUtils: .mergeAttributes() failed. BufferAttribute.gpuType must be consistent across matching attributes.");
+      return null;
+    }
+    arrayLength += attribute.count * itemSize;
+  }
+  const array = new TypedArray(arrayLength);
+  const result = new BufferAttribute(array, itemSize, normalized);
+  let offset = 0;
+  for (let i = 0; i < attributes.length; ++i) {
+    const attribute = attributes[i];
+    if (attribute.isInterleavedBufferAttribute) {
+      const tupleOffset = offset / itemSize;
+      for (let j = 0, l = attribute.count; j < l; j++) {
+        for (let c = 0; c < itemSize; c++) {
+          const value = attribute.getComponent(j, c);
+          result.setComponent(j + tupleOffset, c, value);
+        }
+      }
+    } else {
+      array.set(attribute.array, offset);
+    }
+    offset += attribute.count * itemSize;
+  }
+  if (gpuType !== void 0) {
+    result.gpuType = gpuType;
+  }
+  return result;
+}
+
+// src/big.ts
+var _m = new THREE.Matrix4();
+var _q = new THREE.Quaternion();
+var _e = new THREE.Euler();
+var _p = new THREE.Vector3();
+var _s = new THREE.Vector3();
+var _sphere = new THREE.Sphere();
+var _c = new THREE.Color();
+var Instances = class {
+  constructor(geometry, material, scene, opts = {}) {
+    this.geometry = geometry;
+    this.material = material;
+    this.scene = scene;
+    this.opts = opts;
+    if (!geometry.boundingSphere) geometry.computeBoundingSphere();
+    this.local = geometry.boundingSphere.clone();
+  }
+  geometry;
+  material;
+  scene;
+  mesh = null;
+  opts;
+  mats = [];
+  cols = null;
+  spheres = [];
+  // x, y, z, r per copy
+  dirty = true;
+  lastCam = new Float32Array(16);
+  local;
+  visible = 0;
+  get count() {
+    return this.mats.length / 16;
+  }
+  /** Add a copy at x, y, z. Returns its index. */
+  add(x, y, z, o = {}) {
+    const sc = o.scale ?? 1;
+    const s = typeof sc === "number" ? _s.set(sc, sc, sc) : _s.set(sc[0], sc[1], sc[2]);
+    _q.setFromEuler(_e.set(0, o.rotY ?? 0, 0));
+    _m.compose(_p.set(x, y, z), _q, s);
+    const i = this.count;
+    for (const v of _m.elements) this.mats.push(v);
+    _sphere.copy(this.local).applyMatrix4(_m);
+    this.spheres.push(_sphere.center.x, _sphere.center.y, _sphere.center.z, _sphere.radius);
+    if (o.color !== void 0) {
+      if (!this.cols) {
+        this.cols = [];
+        for (let k = 0; k < i; k++) this.cols.push(1, 1, 1);
+      }
+      const c = Array.isArray(o.color) ? _c.setRGB(o.color[0], o.color[1], o.color[2]) : _c.set(o.color);
+      this.cols.push(c.r, c.g, c.b);
+    } else if (this.cols) this.cols.push(1, 1, 1);
+    this.dirty = true;
+    return i;
+  }
+  build() {
+    const n = Math.max(1, this.count);
+    if (this.mesh && this.mesh.instanceMatrix.count >= n) return;
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.dispose();
+    }
+    const im = new THREE.InstancedMesh(this.geometry, this.material, n);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    if (this.cols) im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    im.castShadow = this.opts.shadow !== false;
+    im.receiveShadow = true;
+    im.frustumCulled = false;
+    im.count = 0;
+    this.scene.add(im);
+    this.mesh = im;
+  }
+  /** Called by the engine before each frame. */
+  cull(cam, frustum, force = false) {
+    if (!this.count) return;
+    if (this.dirty || !this.mesh) this.build();
+    const e = cam.matrixWorld.elements;
+    let moved = this.dirty || force;
+    for (let k2 = 0; k2 < 16 && !moved; k2++) if (Math.abs(e[k2] - this.lastCam[k2]) > 1e-4) moved = true;
+    if (!moved) return;
+    this.lastCam.set(e);
+    this.dirty = false;
+    const im = this.mesh;
+    const far = this.opts.far ?? cam.far ?? 1e3;
+    const near = this.opts.near ?? 30, near2 = near * near;
+    const cx = e[12], cy = e[13], cz = e[14];
+    const out = im.instanceMatrix.array, cout = im.instanceColor?.array;
+    const S = this.spheres, M = this.mats, C = this.cols;
+    let k = 0;
+    for (let i = 0, n = this.count; i < n; i++) {
+      const x = S[i * 4], y = S[i * 4 + 1], z = S[i * 4 + 2], r = S[i * 4 + 3];
+      const d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy) + (z - cz) * (z - cz);
+      if (d2 > (far + r) * (far + r)) continue;
+      if (d2 > near2) {
+        _sphere.center.set(x, y, z);
+        _sphere.radius = r;
+        if (!frustum.intersectsSphere(_sphere)) continue;
+      }
+      for (let j = 0; j < 16; j++) out[k * 16 + j] = M[i * 16 + j];
+      if (cout && C) {
+        cout[k * 3] = C[i * 3];
+        cout[k * 3 + 1] = C[i * 3 + 1];
+        cout[k * 3 + 2] = C[i * 3 + 2];
+      }
+      k++;
+    }
+    im.count = k;
+    this.visible = k;
+    im.instanceMatrix.clearUpdateRanges();
+    im.instanceMatrix.addUpdateRange(0, k * 16);
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) {
+      im.instanceColor.clearUpdateRanges();
+      im.instanceColor.addUpdateRange(0, k * 3);
+      im.instanceColor.needsUpdate = true;
+    }
+  }
+  remove() {
+    if (this.mesh) {
+      this.scene.remove(this.mesh);
+      this.mesh.dispose();
+      this.mesh = null;
+    }
+    this.mats = [];
+    this.spheres = [];
+    this.cols = null;
+  }
+};
+function bake(root, o = {}) {
+  const cell = o.cell ?? 64;
+  root.updateMatrixWorld(true);
+  const inv = root.matrixWorld.clone().invert();
+  const groups = /* @__PURE__ */ new Map();
+  const done = [];
+  root.traverse((ob) => {
+    if (!ob.isMesh || ob.isInstancedMesh || ob.isSkinnedMesh || Array.isArray(ob.material) || !ob.visible) return;
+    if (o.skip?.(ob)) return;
+    const g0 = ob.geometry;
+    if (!g0.boundingSphere) g0.computeBoundingSphere();
+    _sphere.copy(g0.boundingSphere).applyMatrix4(ob.matrixWorld);
+    const cx = Math.floor(_sphere.center.x / cell), cz = Math.floor(_sphere.center.z / cell);
+    const attrs = Object.keys(g0.attributes).sort().join(",");
+    const key = `${ob.material.uuid}|${attrs}|${cx},${cz}`;
+    let gr = groups.get(key);
+    if (!gr) {
+      gr = { mat: ob.material, geos: [], cast: false, recv: false, name: ob.name || ob.material.name || "baked" };
+      groups.set(key, gr);
+    }
+    const g = g0.clone().applyMatrix4(_m.multiplyMatrices(inv, ob.matrixWorld));
+    for (const k of Object.keys(g.morphAttributes)) delete g.morphAttributes[k];
+    gr.geos.push(g);
+    gr.cast ||= ob.castShadow;
+    gr.recv ||= ob.receiveShadow;
+    done.push(ob);
+  });
+  const before = done.length;
+  for (const m of done) m.removeFromParent();
+  const out = [];
+  for (const gr of groups.values()) {
+    const indexed = gr.geos.every((g) => g.index);
+    const list = indexed ? gr.geos : gr.geos.map((g) => g.index ? g.toNonIndexed() : g);
+    const merged = mergeGeometries(list, false);
+    if (!merged) continue;
+    merged.computeBoundingSphere();
+    const mesh2 = new THREE.Mesh(merged, gr.mat);
+    mesh2.castShadow = gr.cast;
+    mesh2.receiveShadow = gr.recv;
+    mesh2.name = gr.name;
+    mesh2.matrixAutoUpdate = false;
+    root.add(mesh2);
+    out.push(mesh2);
+  }
+  root.updateMatrixWorld(true);
+  return { meshes: out, before, after: out.length };
+}
+
+// src/storage.ts
+var mem = {};
+function kimi() {
+  return globalThis.kimi;
+}
+async function load(key, fallback) {
+  try {
+    const k = kimi();
+    if (k?.storage?.get) {
+      const v = await Promise.race([
+        Promise.resolve(k.storage.get(key)),
+        new Promise((r) => setTimeout(() => r(void 0), 800))
+      ]);
+      if (v !== void 0 && v !== null) return v;
+    }
+  } catch {
+  }
+  try {
+    const raw = localStorage.getItem("kimi-game:" + key);
+    if (raw) return JSON.parse(raw);
+  } catch {
+  }
+  return mem[key] ?? fallback;
+}
+async function save(key, value) {
+  mem[key] = value;
+  try {
+    const k = kimi();
+    if (k?.storage?.set) await Promise.resolve(k.storage.set(key, value));
+  } catch {
+  }
+  try {
+    localStorage.setItem("kimi-game:" + key, JSON.stringify(value));
+  } catch {
+  }
+}
+async function addHighScore(game2, score, note) {
+  const key = "hi:" + game2;
+  const list = await load(key, []);
+  const entry = { score: Math.round(score), at: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), note };
+  list.push(entry);
+  list.sort((a, b) => b.score - a.score);
+  const top = list.slice(0, 5);
+  await save(key, top);
+  return { list: top, rank: top.indexOf(entry) };
+}
+async function highScores(game2) {
+  return load("hi:" + game2, []);
+}
+
 // src/render3d.ts
 var PRESETS = {
   neon: { sky: ["#02030b", "#0b0f2e"], fog: "#060918", fogDensity: 0.018, floor: "#05070f", grid: "#2fd7ff", hemi: ["#5a6cff", "#08040f", 0.6], sun: ["#9fb3ff", 0.9], bloom: 1.05, exposure: 1, stars: true, glow: 0.9 },
@@ -3955,12 +4357,12 @@ function mat(color, glow, opts = {}) {
   let m = matCache.get(key);
   if (!m) {
     if (opts.basic) {
-      const c = new THREE.Color(color).multiplyScalar(1 + glow * 2);
-      m = new THREE.MeshBasicMaterial({ color: c, toneMapped: false });
+      const c = new THREE2.Color(color).multiplyScalar(1 + glow * 2);
+      m = new THREE2.MeshBasicMaterial({ color: c, toneMapped: false });
     } else {
-      m = new THREE.MeshStandardMaterial({
+      m = new THREE2.MeshStandardMaterial({
         color,
-        emissive: new THREE.Color(color),
+        emissive: new THREE2.Color(color),
         emissiveIntensity: glow,
         metalness: opts.metal ?? 0.35,
         roughness: opts.rough ?? 0.45,
@@ -3971,29 +4373,29 @@ function mat(color, glow, opts = {}) {
   }
   return m;
 }
-var FLASH = new THREE.MeshBasicMaterial({ color: new THREE.Color(4, 4, 4), toneMapped: false });
+var FLASH = new THREE2.MeshBasicMaterial({ color: new THREE2.Color(4, 4, 4), toneMapped: false });
 var mesh = (g, m) => {
-  const o = new THREE.Mesh(g, m);
+  const o = new THREE2.Mesh(g, m);
   o.castShadow = true;
   o.receiveShadow = true;
   return o;
 };
 var KITS = {
   ship(c, c2, glow) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const body = mesh(geo("ship-body", () => {
-      const x = new THREE.ConeGeometry(0.55, 2.2, 6);
+      const x = new THREE2.ConeGeometry(0.55, 2.2, 6);
       x.rotateZ(-Math.PI / 2);
       return x;
     }), mat(c, glow * 0.6, { flat: true }));
-    const wing = mesh(geo("ship-wing", () => new THREE.BoxGeometry(0.9, 0.08, 2.1)), mat(c, glow * 0.4, { flat: true }));
+    const wing = mesh(geo("ship-wing", () => new THREE2.BoxGeometry(0.9, 0.08, 2.1)), mat(c, glow * 0.4, { flat: true }));
     wing.position.x = -0.35;
-    const fin = mesh(geo("ship-fin", () => new THREE.BoxGeometry(0.6, 0.5, 0.08)), mat(c2, glow));
+    const fin = mesh(geo("ship-fin", () => new THREE2.BoxGeometry(0.6, 0.5, 0.08)), mat(c2, glow));
     fin.position.set(-0.6, 0.25, 0);
-    const eng = mesh(geo("ship-eng", () => new THREE.SphereGeometry(0.28, 12, 8)), mat(c2, 2.5, { basic: true }));
+    const eng = mesh(geo("ship-eng", () => new THREE2.SphereGeometry(0.28, 12, 8)), mat(c2, 2.5, { basic: true }));
     eng.position.x = -1.05;
     eng.name = "engine";
-    const cock = mesh(geo("ship-cock", () => new THREE.SphereGeometry(0.26, 12, 8)), mat("#ffffff", 0.6));
+    const cock = mesh(geo("ship-cock", () => new THREE2.SphereGeometry(0.26, 12, 8)), mat("#ffffff", 0.6));
     cock.position.set(0.25, 0.22, 0);
     cock.scale.set(1.4, 0.6, 0.8);
     g.add(body, wing, fin, eng, cock);
@@ -4001,36 +4403,36 @@ var KITS = {
     return g;
   },
   drone(c, c2, glow) {
-    const g = new THREE.Group();
-    const core = mesh(geo("drone-core", () => new THREE.IcosahedronGeometry(0.6, 0)), mat(c, glow, { flat: true }));
-    const ring = mesh(geo("drone-ring", () => new THREE.TorusGeometry(0.95, 0.08, 6, 24)), mat(c2, glow * 1.8, { basic: true }));
+    const g = new THREE2.Group();
+    const core = mesh(geo("drone-core", () => new THREE2.IcosahedronGeometry(0.6, 0)), mat(c, glow, { flat: true }));
+    const ring = mesh(geo("drone-ring", () => new THREE2.TorusGeometry(0.95, 0.08, 6, 24)), mat(c2, glow * 1.8, { basic: true }));
     ring.rotation.x = Math.PI / 2;
     ring.name = "spin";
     g.add(core, ring);
     return g;
   },
   orb(c, _c2, glow) {
-    const g = new THREE.Group();
-    g.add(mesh(geo("orb", () => new THREE.SphereGeometry(1, 20, 14)), mat(c, glow * 1.5 + 0.3, { basic: glow > 1 })));
+    const g = new THREE2.Group();
+    g.add(mesh(geo("orb", () => new THREE2.SphereGeometry(1, 20, 14)), mat(c, glow * 1.5 + 0.3, { basic: glow > 1 })));
     return g;
   },
   crystal(c, c2, glow) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const m = mesh(geo("crystal", () => {
-      const x = new THREE.OctahedronGeometry(1, 0);
+      const x = new THREE2.OctahedronGeometry(1, 0);
       x.scale(1, 1.5, 1);
       return x;
     }), mat(c, glow, { flat: true, metal: 0.1, rough: 0.2 }));
     m.name = "spin";
-    const inner = mesh(geo("crystal-in", () => new THREE.OctahedronGeometry(0.45, 0)), mat(c2, 2, { basic: true }));
+    const inner = mesh(geo("crystal-in", () => new THREE2.OctahedronGeometry(0.45, 0)), mat(c2, 2, { basic: true }));
     g.add(m, inner);
     return g;
   },
   rock(c, _c2, glow, e) {
     const k = "rock" + e.id % 4;
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     g.add(mesh(geo(k, () => {
-      const x = new THREE.DodecahedronGeometry(1, 0);
+      const x = new THREE2.DodecahedronGeometry(1, 0);
       const p = x.attributes.position;
       const r = rng(e.id % 4 + 11);
       const seen = /* @__PURE__ */ new Map();
@@ -4046,14 +4448,14 @@ var KITS = {
     return g;
   },
   ball(c, _c2, glow) {
-    const g = new THREE.Group();
-    g.add(mesh(geo("ball", () => new THREE.SphereGeometry(1, 24, 16)), mat(c, glow, { metal: 0.2, rough: 0.3 })));
+    const g = new THREE2.Group();
+    g.add(mesh(geo("ball", () => new THREE2.SphereGeometry(1, 24, 16)), mat(c, glow, { metal: 0.2, rough: 0.3 })));
     return g;
   },
   bullet(c, _c2, glow) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const m = mesh(geo("bullet", () => {
-      const x = new THREE.CapsuleGeometry(0.5, 1.6, 4, 8);
+      const x = new THREE2.CapsuleGeometry(0.5, 1.6, 4, 8);
       x.rotateZ(Math.PI / 2);
       return x;
     }), mat(c, 1.2 + glow, { basic: true }));
@@ -4062,27 +4464,27 @@ var KITS = {
     return g;
   },
   coin(c, c2, glow) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const m = mesh(geo("coin", () => {
-      const x = new THREE.CylinderGeometry(1, 1, 0.22, 24);
+      const x = new THREE2.CylinderGeometry(1, 1, 0.22, 24);
       x.rotateX(Math.PI / 2);
       return x;
     }), mat(c, glow + 0.3, { metal: 0.9, rough: 0.25 }));
     m.name = "spin";
-    const ring = mesh(geo("coin-r", () => new THREE.TorusGeometry(0.62, 0.08, 6, 24)), mat(c2, 1.2));
+    const ring = mesh(geo("coin-r", () => new THREE2.TorusGeometry(0.62, 0.08, 6, 24)), mat(c2, 1.2));
     m.add(ring);
     g.add(m);
     return g;
   },
   tank(c, c2, glow) {
-    const g = new THREE.Group();
-    const body = mesh(geo("tank-body", () => new THREE.BoxGeometry(2, 0.6, 1.5)), mat(c, glow * 0.3, { flat: true }));
-    const turret = new THREE.Group();
+    const g = new THREE2.Group();
+    const body = mesh(geo("tank-body", () => new THREE2.BoxGeometry(2, 0.6, 1.5)), mat(c, glow * 0.3, { flat: true }));
+    const turret = new THREE2.Group();
     turret.name = "turret";
     turret.position.y = 0.45;
-    turret.add(mesh(geo("tank-tur", () => new THREE.CylinderGeometry(0.5, 0.6, 0.4, 8)), mat(c2, glow * 0.3, { flat: true })));
+    turret.add(mesh(geo("tank-tur", () => new THREE2.CylinderGeometry(0.5, 0.6, 0.4, 8)), mat(c2, glow * 0.3, { flat: true })));
     const barrel = mesh(geo("tank-bar", () => {
-      const x = new THREE.CylinderGeometry(0.12, 0.12, 1.3, 8);
+      const x = new THREE2.CylinderGeometry(0.12, 0.12, 1.3, 8);
       x.rotateZ(Math.PI / 2);
       x.translate(0.75, 0, 0);
       return x;
@@ -4093,14 +4495,14 @@ var KITS = {
     return g;
   },
   car(c, c2, glow) {
-    const g = new THREE.Group();
-    g.add(mesh(geo("car-body", () => new THREE.BoxGeometry(2.2, 0.5, 1.1)), mat(c, glow * 0.3, { metal: 0.6, rough: 0.3 })));
-    const cab = mesh(geo("car-cab", () => new THREE.BoxGeometry(1, 0.4, 0.9)), mat(c2, glow * 0.2, { metal: 0.2, rough: 0.1 }));
+    const g = new THREE2.Group();
+    g.add(mesh(geo("car-body", () => new THREE2.BoxGeometry(2.2, 0.5, 1.1)), mat(c, glow * 0.3, { metal: 0.6, rough: 0.3 })));
+    const cab = mesh(geo("car-cab", () => new THREE2.BoxGeometry(1, 0.4, 0.9)), mat(c2, glow * 0.2, { metal: 0.2, rough: 0.1 }));
     cab.position.set(-0.15, 0.42, 0);
     g.add(cab);
     for (const [x, z] of [[0.7, 0.55], [0.7, -0.55], [-0.7, 0.55], [-0.7, -0.55]]) {
       const w = mesh(geo("car-wheel", () => {
-        const t = new THREE.CylinderGeometry(0.28, 0.28, 0.22, 12);
+        const t = new THREE2.CylinderGeometry(0.28, 0.28, 0.22, 12);
         t.rotateX(Math.PI / 2);
         return t;
       }), mat("#111", 0));
@@ -4111,31 +4513,31 @@ var KITS = {
     return g;
   },
   character(c, c2, glow) {
-    const g = new THREE.Group();
-    const body = mesh(geo("char-body", () => new THREE.CapsuleGeometry(0.45, 0.8, 4, 10)), mat(c, glow * 0.3));
-    const head = mesh(geo("char-head", () => new THREE.SphereGeometry(0.38, 14, 10)), mat(c2, glow * 0.3));
+    const g = new THREE2.Group();
+    const body = mesh(geo("char-body", () => new THREE2.CapsuleGeometry(0.45, 0.8, 4, 10)), mat(c, glow * 0.3));
+    const head = mesh(geo("char-head", () => new THREE2.SphereGeometry(0.38, 14, 10)), mat(c2, glow * 0.3));
     head.position.y = 0.95;
-    const eye = mesh(geo("char-eye", () => new THREE.BoxGeometry(0.1, 0.1, 0.5)), mat("#111", 0));
+    const eye = mesh(geo("char-eye", () => new THREE2.BoxGeometry(0.1, 0.1, 0.5)), mat("#111", 0));
     eye.position.set(0.32, 1, 0);
     g.add(body, head, eye);
     g.scale.setScalar(0.55);
     return g;
   },
   tree(c, c2) {
-    const g = new THREE.Group();
-    const trunk = mesh(geo("tree-trunk", () => new THREE.CylinderGeometry(0.15, 0.22, 1, 6)), mat(c2 === "#e6f0ff" ? "#6b4a2b" : c2, 0, { rough: 0.9 }));
-    const top = mesh(geo("tree-top", () => new THREE.ConeGeometry(0.8, 1.6, 7)), mat(c, 0.05, { flat: true, rough: 0.8 }));
+    const g = new THREE2.Group();
+    const trunk = mesh(geo("tree-trunk", () => new THREE2.CylinderGeometry(0.15, 0.22, 1, 6)), mat(c2 === "#e6f0ff" ? "#6b4a2b" : c2, 0, { rough: 0.9 }));
+    const top = mesh(geo("tree-top", () => new THREE2.ConeGeometry(0.8, 1.6, 7)), mat(c, 0.05, { flat: true, rough: 0.8 }));
     top.position.y = 1.2;
     g.add(trunk, top);
     return g;
   },
   building(c, c2, glow) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const b = mesh(geo("bld", () => {
-      const x = new THREE.BoxGeometry(1, 1, 1);
+      const x = new THREE2.BoxGeometry(1, 1, 1);
       return x;
     }), mat(c, glow * 0.15, { rough: 0.7 }));
-    const w = mesh(geo("bld-w", () => new THREE.BoxGeometry(1.02, 0.08, 1.02)), mat(c2, 1.5, { basic: true }));
+    const w = mesh(geo("bld-w", () => new THREE2.BoxGeometry(1.02, 0.08, 1.02)), mat(c2, 1.5, { basic: true }));
     w.position.y = 0.2;
     const w2 = w.clone();
     w2.position.y = -0.1;
@@ -4143,48 +4545,48 @@ var KITS = {
     return g;
   },
   boss(c, c2, glow) {
-    const g = new THREE.Group();
-    const core = mesh(geo("boss-core", () => new THREE.IcosahedronGeometry(1, 1)), mat(c, glow * 0.5, { flat: true, metal: 0.6, rough: 0.35 }));
+    const g = new THREE2.Group();
+    const core = mesh(geo("boss-core", () => new THREE2.IcosahedronGeometry(1, 1)), mat(c, glow * 0.5, { flat: true, metal: 0.6, rough: 0.35 }));
     core.name = "spin";
-    const spikes = new THREE.Group();
+    const spikes = new THREE2.Group();
     const spikeGeo = geo("boss-spike", () => {
-      const x = new THREE.ConeGeometry(0.18, 0.7, 5);
+      const x = new THREE2.ConeGeometry(0.18, 0.7, 5);
       x.translate(0, 1.2, 0);
       return x;
     });
-    const ico = new THREE.IcosahedronGeometry(1, 0).attributes.position;
+    const ico = new THREE2.IcosahedronGeometry(1, 0).attributes.position;
     const dirs = /* @__PURE__ */ new Set();
     for (let i = 0; i < ico.count; i++) dirs.add(`${ico.getX(i).toFixed(2)},${ico.getY(i).toFixed(2)},${ico.getZ(i).toFixed(2)}`);
     for (const d of dirs) {
       const [x, y, z] = d.split(",").map(Number);
       const s = mesh(spikeGeo, mat(c2, glow * 1.4));
-      s.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(x, y, z).normalize());
+      s.quaternion.setFromUnitVectors(new THREE2.Vector3(0, 1, 0), new THREE2.Vector3(x, y, z).normalize());
       spikes.add(s);
     }
     core.add(spikes);
-    const ring1 = mesh(geo("boss-ring", () => new THREE.TorusGeometry(1.7, 0.05, 6, 48)), mat(c2, 0.35, { basic: true }));
+    const ring1 = mesh(geo("boss-ring", () => new THREE2.TorusGeometry(1.7, 0.05, 6, 48)), mat(c2, 0.35, { basic: true }));
     ring1.name = "ring1";
     const ring2 = ring1.clone();
     ring2.name = "ring2";
-    const eye = mesh(geo("boss-eye", () => new THREE.SphereGeometry(0.42, 16, 12)), mat("#ffffff", 3, { basic: true }));
+    const eye = mesh(geo("boss-eye", () => new THREE2.SphereGeometry(0.42, 16, 12)), mat("#ffffff", 3, { basic: true }));
     eye.position.x = 0.85;
     eye.name = "eye";
     g.add(core, ring1, ring2, eye);
     return g;
   },
   star(c, _c2, glow) {
-    const g = new THREE.Group();
-    const m = mesh(geo("star", () => new THREE.OctahedronGeometry(1, 0)), mat(c, glow + 0.8, { flat: true }));
+    const g = new THREE2.Group();
+    const m = mesh(geo("star", () => new THREE2.OctahedronGeometry(1, 0)), mat(c, glow + 0.8, { flat: true }));
     m.name = "spin";
     g.add(m);
     return g;
   },
   pillar(c, c2, glow, e) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const h = e.box ? 1 : 2;
-    const m = mesh(geo("pillar", () => new THREE.CylinderGeometry(1, 1, 1, 12)), mat(c, glow * 0.2, { metal: 0.5, rough: 0.4 }));
+    const m = mesh(geo("pillar", () => new THREE2.CylinderGeometry(1, 1, 1, 12)), mat(c, glow * 0.2, { metal: 0.5, rough: 0.4 }));
     m.scale.y = e.box ? e.box[1] : h * e.radius;
-    const band = mesh(geo("pillar-band", () => new THREE.CylinderGeometry(1.03, 1.03, 0.12, 12)), mat(c2, 2, { basic: true }));
+    const band = mesh(geo("pillar-band", () => new THREE2.CylinderGeometry(1.03, 1.03, 0.12, 12)), mat(c2, 2, { basic: true }));
     band.position.y = m.scale.y * 0.3;
     g.add(m, band);
     g.userData.noScale = true;
@@ -4192,19 +4594,19 @@ var KITS = {
     return g;
   },
   block(c, c2, glow, e) {
-    const g = new THREE.Group();
+    const g = new THREE2.Group();
     const [w, h, d] = e.box ?? [e.radius * 2, e.radius * 2, e.radius * 2];
-    const m = mesh(geo("block", () => new THREE.BoxGeometry(1, 1, 1)), mat(c, glow * 0.3, { rough: 0.6 }));
+    const m = mesh(geo("block", () => new THREE2.BoxGeometry(1, 1, 1)), mat(c, glow * 0.3, { rough: 0.6 }));
     m.scale.set(w, h, d ?? w);
-    const edge = new THREE.LineSegments(geo("block-edge", () => new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1))), new THREE.LineBasicMaterial({ color: new THREE.Color(c2 === "#e6f0ff" ? c : c2).multiplyScalar(2), toneMapped: false }));
+    const edge = new THREE2.LineSegments(geo("block-edge", () => new THREE2.EdgesGeometry(new THREE2.BoxGeometry(1, 1, 1))), new THREE2.LineBasicMaterial({ color: new THREE2.Color(c2 === "#e6f0ff" ? c : c2).multiplyScalar(2), toneMapped: false }));
     edge.scale.copy(m.scale);
     g.add(m, edge);
     g.userData.noScale = true;
     return g;
   },
   circle(c, _c2, glow) {
-    const g = new THREE.Group();
-    g.add(mesh(geo("ball", () => new THREE.SphereGeometry(1, 24, 16)), mat(c, glow)));
+    const g = new THREE2.Group();
+    g.add(mesh(geo("ball", () => new THREE2.SphereGeometry(1, 24, 16)), mat(c, glow)));
     return g;
   }
 };
@@ -4223,7 +4625,7 @@ var PFS = `
 varying vec4 vC;
 void main(){ vec2 d = gl_PointCoord - 0.5; float r = dot(d,d); if (r > 0.25) discard; float a = smoothstep(0.25, 0.0, r); gl_FragColor = vec4(vC.rgb * (1.0 + a), vC.a * a); }`;
 var Particles = class {
-  geo = new THREE.BufferGeometry();
+  geo = new THREE2.BufferGeometry();
   pos = new Float32Array(PMAX * 3);
   col = new Float32Array(PMAX * 4);
   size = new Float32Array(PMAX);
@@ -4237,11 +4639,11 @@ var Particles = class {
   n = 0;
   points;
   constructor() {
-    this.geo.setAttribute("position", new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage));
-    this.geo.setAttribute("rgba", new THREE.BufferAttribute(this.col, 4).setUsage(THREE.DynamicDrawUsage));
-    this.geo.setAttribute("size", new THREE.BufferAttribute(this.size, 1).setUsage(THREE.DynamicDrawUsage));
-    const m = new THREE.ShaderMaterial({ vertexShader: PVS, fragmentShader: PFS, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
-    this.points = new THREE.Points(this.geo, m);
+    this.geo.setAttribute("position", new THREE2.BufferAttribute(this.pos, 3).setUsage(THREE2.DynamicDrawUsage));
+    this.geo.setAttribute("rgba", new THREE2.BufferAttribute(this.col, 4).setUsage(THREE2.DynamicDrawUsage));
+    this.geo.setAttribute("size", new THREE2.BufferAttribute(this.size, 1).setUsage(THREE2.DynamicDrawUsage));
+    const m = new THREE2.ShaderMaterial({ vertexShader: PVS, fragmentShader: PFS, transparent: true, depthWrite: false, blending: THREE2.AdditiveBlending, toneMapped: false });
+    this.points = new THREE2.Points(this.geo, m);
     this.points.frustumCulled = false;
   }
   add(x, y, z, vx, vy, vz, life, size, c, g, fade) {
@@ -4306,8 +4708,8 @@ var Particles = class {
   }
 };
 function gridFloor(size, color, base, radius) {
-  const m = new THREE.ShaderMaterial({
-    uniforms: { uC: { value: new THREE.Color(color) }, uB: { value: new THREE.Color(base) }, uT: { value: 0 }, uR: { value: radius }, uPulse: { value: 0 }, uFog: { value: new THREE.Color("#000") }, uFogD: { value: 0 } },
+  const m = new THREE2.ShaderMaterial({
+    uniforms: { uC: { value: new THREE2.Color(color) }, uB: { value: new THREE2.Color(base) }, uT: { value: 0 }, uR: { value: radius }, uPulse: { value: 0 }, uFog: { value: new THREE2.Color("#000") }, uFogD: { value: 0 } },
     vertexShader: `varying vec3 vW; void main(){ vec4 w = modelMatrix * vec4(position,1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }`,
     fragmentShader: `
       uniform vec3 uC; uniform vec3 uB; uniform float uT; uniform float uR; uniform float uPulse; uniform vec3 uFog; uniform float uFogD; varying vec3 vW;
@@ -4325,23 +4727,23 @@ function gridFloor(size, color, base, radius) {
       }`,
     extensions: { derivatives: true }
   });
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size, 1, 1), m);
+  const plane = new THREE2.Mesh(new THREE2.PlaneGeometry(size, size, 1, 1), m);
   plane.rotation.x = -Math.PI / 2;
   plane.receiveShadow = false;
   return plane;
 }
 function skyDome(top, bottom) {
-  const m = new THREE.ShaderMaterial({
-    side: THREE.BackSide,
+  const m = new THREE2.ShaderMaterial({
+    side: THREE2.BackSide,
     depthWrite: false,
-    uniforms: { uTop: { value: new THREE.Color(top) }, uBot: { value: new THREE.Color(bottom) } },
+    uniforms: { uTop: { value: new THREE2.Color(top) }, uBot: { value: new THREE2.Color(bottom) } },
     vertexShader: `varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `uniform vec3 uTop; uniform vec3 uBot; varying vec3 vP; void main(){ float h = clamp(vP.y * 0.5 + 0.5, 0.0, 1.0); gl_FragColor = vec4(mix(uBot, uTop, pow(h, 0.7)), 1.0); }`
   });
-  return new THREE.Mesh(new THREE.SphereGeometry(400, 24, 12), m);
+  return new THREE2.Mesh(new THREE2.SphereGeometry(400, 24, 12), m);
 }
 function starField(n) {
-  const g = new THREE.BufferGeometry();
+  const g = new THREE2.BufferGeometry();
   const p = new Float32Array(n * 3);
   const r = rng(3);
   for (let i = 0; i < n; i++) {
@@ -4349,30 +4751,30 @@ function starField(n) {
     const s = Math.sqrt(1 - u * u);
     p.set([Math.cos(th) * s * 350, Math.abs(u) * 350 + 10, Math.sin(th) * s * 350], i * 3);
   }
-  g.setAttribute("position", new THREE.BufferAttribute(p, 3));
-  return new THREE.Points(g, new THREE.PointsMaterial({ color: new THREE.Color(1.6, 1.7, 2), size: 1.2, sizeAttenuation: false, toneMapped: false, fog: false }));
+  g.setAttribute("position", new THREE2.BufferAttribute(p, 3));
+  return new THREE2.Points(g, new THREE2.PointsMaterial({ color: new THREE2.Color(1.6, 1.7, 2), size: 1.2, sizeAttenuation: false, toneMapped: false, fog: false }));
 }
 var Render3D = class {
   constructor(g) {
     this.g = g;
     const custom = g.opts.preset === "custom";
     const p = this.preset = PRESETS[g.opts.preset ?? "neon"] ?? PRESETS.neon;
-    this.renderer = new THREE.WebGLRenderer({ antialias: !custom, powerPreference: "high-performance", stencil: false });
-    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer = new THREE2.WebGLRenderer({ antialias: !custom, powerPreference: "high-performance", stencil: false });
+    this.renderer.outputColorSpace = THREE2.SRGBColorSpace;
+    this.renderer.toneMapping = THREE2.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = p.exposure;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.type = THREE2.PCFShadowMap;
     this.renderer.info.autoReset = false;
     this.canvas = this.renderer.domElement;
     g.root.prepend(this.canvas);
-    this.cam = new THREE.PerspectiveCamera(55, 1, 0.1, 900);
+    this.cam = new THREE2.PerspectiveCamera(55, 1, 0.1, 900);
     if (!custom) {
-      this.scene.fog = new THREE.FogExp2(new THREE.Color(p.fog), p.fogDensity);
+      this.scene.fog = new THREE2.FogExp2(new THREE2.Color(p.fog), p.fogDensity);
       this.scene.add(skyDome(p.sky[1], p.sky[0]));
       if (p.stars) this.scene.add(starField(1400));
     }
-    const hemi = new THREE.HemisphereLight(p.hemi[0], p.hemi[1], p.hemi[2]);
-    this.sun = new THREE.DirectionalLight(p.sun[0], p.sun[1]);
+    const hemi = new THREE2.HemisphereLight(p.hemi[0], p.hemi[1], p.hemi[2]);
+    this.sun = new THREE2.DirectionalLight(p.sun[0], p.sun[1]);
     this.sun.position.set(18, 40, 12);
     this.sun.shadow.mapSize.set(2048, 2048);
     const sc = this.sun.shadow.camera;
@@ -4385,7 +4787,7 @@ var Render3D = class {
     if (g.opts.floor !== false && p.floor && !custom) {
       this.floor = gridFloor(Math.max(200, size), p.grid, p.floor, b.kind === "circle" ? b.r : 0);
       const u = this.floor.material.uniforms;
-      u.uFog.value = new THREE.Color(p.fog);
+      u.uFog.value = new THREE2.Color(p.fog);
       u.uFogD.value = p.fogDensity;
       this.scene.add(this.floor);
     }
@@ -4394,7 +4796,18 @@ var Render3D = class {
     const cores = navigator.hardwareConcurrency ?? 4;
     this.quality = q === "low" ? 0 : q === "medium" ? 1 : q === "high" ? 3 : cores >= 8 ? 3 : 2;
     this.qualityMax = q === "auto" ? 3 : this.quality;
+    this.makeLadder();
+    this.step = this.ladder.findIndex(([lq]) => lq <= this.quality);
     this.applyQuality();
+    this.perfKey = "perf:" + (g.opts.title ?? "game");
+    if (q === "auto" && g.opts.adaptive !== false) {
+      load(this.perfKey, {}).then((v) => {
+        if (typeof v.step === "number" && v.step >= 0 && v.step < this.ladder.length) {
+          this.savedStep = v.step;
+          this.goStep(v.step, "kept from last time");
+        }
+      });
+    }
     const self = this;
     this.camera = {
       yaw: 0,
@@ -4435,9 +4848,9 @@ var Render3D = class {
   is3d = true;
   canvas;
   renderer;
-  scene = new THREE.Scene();
+  scene = new THREE2.Scene();
   cam;
-  THREE = THREE;
+  THREE = THREE2;
   composer;
   bloom;
   particles = new Particles();
@@ -4447,30 +4860,96 @@ var Render3D = class {
   floor;
   sun;
   preset;
-  ray = new THREE.Raycaster();
-  v3 = new THREE.Vector3();
+  ray = new THREE2.Raycaster();
+  v3 = new THREE2.Vector3();
   quality = 2;
   qualityMax = 3;
-  frameMs = [];
-  raisedOnce = false;
   pipeline;
   qualityFns = [];
+  // resolution scale and the adaptive ladder: (quality, scale) from best to cheapest
+  scale = 1;
+  scaleFns = [];
+  ladder = [];
+  step = 0;
+  failed = /* @__PURE__ */ new Set();
+  evalAt = 0;
+  calm = 0;
+  stableFor = 0;
+  savedStep = -1;
+  perfKey = "";
+  // shadows are redrawn every n frames (0: by quality)
+  shadowN = 0;
+  shadowFrame = 0;
+  shadowCount = 0;
+  shadowRate = 0;
+  shadowAt = 0;
+  inst = [];
+  frustum = new THREE2.Frustum();
+  pv = new THREE2.Matrix4();
+  culledEntities = 0;
+  // where a frame's time goes: the CPU submitting the draw, and the GPU drawing it (when the
+  // browser exposes timer queries; Chrome often does not)
+  submitMs = 0;
+  gpuMs = -1;
+  timer = null;
+  queries = [];
+  lastDraw = 0;
+  /** Entities with a mesh are hidden beyond this distance from the camera (0: never). Per entity: { cull: m }. */
+  cullDistance = 0;
   modeCam = { kind: "topdown", e: null, height: 22, distance: 14, lerp: 5, lead: 0.35 };
-  camPos = new THREE.Vector3(0, 22, 14);
-  camLook = new THREE.Vector3();
+  camPos = new THREE2.Vector3(0, 22, 14);
+  camLook = new THREE2.Vector3();
   trauma = 0;
   camera;
+  makeLadder() {
+    const all = [[3, 1], [2, 1], [2, 0.85], [1, 1], [1, 0.85], [1, 0.7], [0, 1], [0, 0.85], [0, 0.7], [0, 0.6], [0, 0.5]];
+    const ad = this.g.opts.adaptive;
+    const min = typeof ad === "object" ? ad.minScale ?? 0.5 : 0.5;
+    this.ladder = all.filter(([q, s]) => q <= this.qualityMax && s >= min - 1e-6);
+  }
+  goStep(i, why) {
+    i = Math.max(0, Math.min(this.ladder.length - 1, i));
+    const [q, sc] = this.ladder[i];
+    const changedQ = q !== this.quality, changedS = sc !== this.scale;
+    this.step = i;
+    this.stableFor = 0;
+    this.evalAt = performance.now() + 1500;
+    if (changedQ) {
+      this.quality = q;
+      this.scale = sc;
+      this.applyQuality();
+    } else if (changedS) {
+      this.scale = sc;
+      this.applyScale();
+    }
+    if (changedQ || changedS) this.g._note(`quality ${q} at ${Math.round(sc * 100)}% resolution (${why})`);
+  }
+  /** Pixel ratio for a quality level before the resolution scale. */
+  basePixelRatio(q = this.quality) {
+    const dpr = devicePixelRatio || 1;
+    return q >= 3 ? Math.min(2, dpr) : q === 2 ? Math.min(1.5, dpr) : q === 1 ? 1 : 0.75;
+  }
+  applyScale() {
+    if (!this.pipeline) {
+      this.renderer.setPixelRatio(this.basePixelRatio() * this.scale);
+      this.resize();
+    }
+    for (const f of this.scaleFns) try {
+      f(this.scale);
+    } catch (err) {
+      this.g._error(err);
+    }
+  }
   applyQuality() {
     const q = this.quality;
-    const dpr = devicePixelRatio || 1;
-    this.renderer.setPixelRatio(q >= 3 ? Math.min(2, dpr) : q === 2 ? Math.min(1.5, dpr) : q === 1 ? 1 : 0.75);
+    this.renderer.setPixelRatio(this.basePixelRatio(q) * this.scale);
     this.renderer.shadowMap.enabled = q >= 3;
     this.sun.castShadow = q >= 3;
     if (q >= 2 && this.g.opts.bloom !== false && this.preset.bloom > 0) {
       if (!this.composer) {
         this.composer = new EffectComposer(this.renderer);
         this.composer.addPass(new RenderPass(this.scene, this.cam));
-        this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), this.preset.bloom * 0.8, 0.45, 0.8);
+        this.bloom = new UnrealBloomPass(new THREE2.Vector2(256, 256), this.preset.bloom * 0.8, 0.45, 0.8);
         this.composer.addPass(this.bloom);
         this.composer.addPass(new OutputPass());
       }
@@ -4482,6 +4961,11 @@ var Render3D = class {
     this.resize();
     for (const f of this.qualityFns) try {
       f(q);
+    } catch (err) {
+      this.g._error(err);
+    }
+    for (const f of this.scaleFns) try {
+      f(this.scale);
     } catch (err) {
       this.g._error(err);
     }
@@ -4572,9 +5056,9 @@ var Render3D = class {
   updatePointer() {
     const p = this.g.input.pointer;
     const w = this.g.root.clientWidth, h = this.g.root.clientHeight;
-    this.ray.setFromCamera(new THREE.Vector2(p.x / w * 2 - 1, -(p.y / h) * 2 + 1), this.cam);
-    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -(this.g.opts.aimHeight ?? 0.6));
-    const hit = new THREE.Vector3();
+    this.ray.setFromCamera(new THREE2.Vector2(p.x / w * 2 - 1, -(p.y / h) * 2 + 1), this.cam);
+    const plane = new THREE2.Plane(new THREE2.Vector3(0, 1, 0), -(this.g.opts.aimHeight ?? 0.6));
+    const hit = new THREE2.Vector3();
     if (this.ray.ray.intersectPlane(plane, hit)) {
       p.world.x = hit.x;
       p.world.y = hit.z;
@@ -4583,7 +5067,7 @@ var Render3D = class {
   burst(at, o) {
     const n = o.count ?? 20;
     const r = this.g.rand;
-    const cols = (Array.isArray(o.color) ? o.color : [o.color ?? "#ffffff"]).map((c) => new THREE.Color(c).multiplyScalar(1.6));
+    const cols = (Array.isArray(o.color) ? o.color : [o.color ?? "#ffffff"]).map((c) => new THREE2.Color(c).multiplyScalar(1.6));
     for (let i = 0; i < n; i++) {
       let ang = r(0, Math.PI * 2);
       if (o.dir) ang = Math.atan2(o.dir[1], o.dir[0]) + r(-(o.spread ?? 0.5), o.spread ?? 0.5);
@@ -4593,15 +5077,15 @@ var Render3D = class {
     }
   }
   beam(a, b, o) {
-    const va = new THREE.Vector3(a[0], a[1], a[2]), vb = new THREE.Vector3(b[0], b[1], b[2]);
+    const va = new THREE2.Vector3(a[0], a[1], a[2]), vb = new THREE2.Vector3(b[0], b[1], b[2]);
     const len2 = va.distanceTo(vb);
-    const m = new THREE.Mesh(
+    const m = new THREE2.Mesh(
       geo("beam", () => {
-        const x = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true);
+        const x = new THREE2.CylinderGeometry(1, 1, 1, 6, 1, true);
         x.rotateX(Math.PI / 2);
         return x;
       }),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(o.color ?? "#ffffff").multiplyScalar(2.5), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false })
+      new THREE2.MeshBasicMaterial({ color: new THREE2.Color(o.color ?? "#ffffff").multiplyScalar(2.5), transparent: true, blending: THREE2.AdditiveBlending, depthWrite: false, toneMapped: false })
     );
     const w = o.width ?? 0.12;
     m.scale.set(w, w, len2);
@@ -4611,13 +5095,13 @@ var Render3D = class {
     this.beams.push({ m, life: o.life ?? 0.25, max: o.life ?? 0.25 });
   }
   ring(at, o) {
-    const m = new THREE.Mesh(
+    const m = new THREE2.Mesh(
       geo("ringfx", () => {
-        const x = new THREE.RingGeometry(0.92, 1, 64);
+        const x = new THREE2.RingGeometry(0.92, 1, 64);
         x.rotateX(-Math.PI / 2);
         return x;
       }),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(o.color ?? "#ffffff").multiplyScalar(2.2), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false })
+      new THREE2.MeshBasicMaterial({ color: new THREE2.Color(o.color ?? "#ffffff").multiplyScalar(2.2), transparent: true, blending: THREE2.AdditiveBlending, depthWrite: false, side: THREE2.DoubleSide, toneMapped: false })
     );
     m.position.set(at[0], Math.max(0.05, (at[1] ?? 0) * 0.2), at[2]);
     this.scene.add(m);
@@ -4627,11 +5111,22 @@ var Render3D = class {
     const g = this.g, s = g.current;
     const t = g.time;
     this.renderer.info.reset();
+    const cp = this.cam.position;
+    let culled = 0;
     if (s) {
       for (const e of s.entities) {
         const obj = e.visual;
         if (!obj) continue;
         obj.visible = e.visible && !(e.invuln > 0 && Math.floor(e.invuln * 20) % 2);
+        const cd = e.opts.cull ?? this.cullDistance;
+        if (cd > 0 && obj.visible) {
+          const dx = e.x - cp.x, dy = e.y - cp.y, dz = e.z - cp.z;
+          if (dx * dx + dy * dy + dz * dz > cd * cd) {
+            obj.visible = false;
+            culled++;
+            continue;
+          }
+        }
         obj.position.set(lerp(e.ox, e.x, alpha), lerp(e.oy, e.y, alpha), lerp(e.oz, e.z, alpha));
         obj.rotation.y = -angleLerp(e.orot, e.rot, alpha);
         if (e.opts.shape === "ship" || e.opts.shape === "player") {
@@ -4654,14 +5149,15 @@ var Render3D = class {
         if (!obj.userData.noScale && obj.userData.base) obj.scale.copy(obj.userData.base).multiplyScalar((e.opts.size ?? 1) * e.radius * e.scale);
       }
     }
+    this.culledEntities = culled;
     const mc = this.modeCam;
     if (mc.kind === "manual") {
       this.renderFx(dt);
       return;
     }
     const k = 1 - Math.exp(-(mc.lerp ?? 5) * Math.max(dt, 1 / 240));
-    const target = new THREE.Vector3();
-    const look = new THREE.Vector3();
+    const target = new THREE2.Vector3();
+    const look = new THREE2.Vector3();
     if ((mc.kind === "topdown" || mc.kind === "chase" || mc.kind === "first") && mc.e?.alive) {
       const e = mc.e;
       const ex = lerp(e.ox, e.x, alpha), ey = lerp(e.oy, e.y, alpha), ez = lerp(e.oz, e.z, alpha);
@@ -4741,10 +5237,90 @@ var Render3D = class {
       u.uT.value = t;
       u.uPulse.value = Math.max(0, u.uPulse.value - dt * 1.5);
     }
+    if (this.inst.length) {
+      this.cam.updateMatrixWorld();
+      this.pv.multiplyMatrices(this.cam.projectionMatrix, this.cam.matrixWorldInverse);
+      this.frustum.setFromProjectionMatrix(this.pv);
+      for (const i of this.inst) i.cull(this.cam, this.frustum);
+    }
+    const sm = this.renderer.shadowMap;
+    if (sm.enabled) {
+      sm.autoUpdate = false;
+      const every = this.shadowN || (this.quality >= 2 ? 1 : 2);
+      if (++this.shadowFrame >= every) {
+        this.shadowFrame = 0;
+        sm.needsUpdate = true;
+        this.shadowCount++;
+      }
+      const now = performance.now();
+      if (now - this.shadowAt > 1e3) {
+        this.shadowRate = this.shadowCount;
+        this.shadowCount = 0;
+        this.shadowAt = now;
+      }
+    } else this.shadowRate = 0;
+    const nowT = performance.now();
+    if (this.g.state === "paused" && nowT - this.lastDraw < 200) return;
+    this.lastDraw = nowT;
+    const q = this.beginGpu();
+    const t0 = performance.now();
     if (this.pipeline) this.pipeline(dt);
     else if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam);
+    this.submitMs = this.submitMs * 0.9 + (performance.now() - t0) * 0.1;
+    this.endGpu(q);
     this.adapt(dt);
+  }
+  beginGpu() {
+    const gl = this.renderer.getContext();
+    if (this.timer === null) this.timer = gl.getExtension("EXT_disjoint_timer_query_webgl2") ?? false;
+    const ext = this.timer;
+    for (let i = this.queries.length - 1; i >= 0; i--) {
+      const qq2 = this.queries[i];
+      if (!gl.getQueryParameter(qq2, gl.QUERY_RESULT_AVAILABLE)) continue;
+      if (ext && !gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+        const ms = gl.getQueryParameter(qq2, gl.QUERY_RESULT) / 1e6;
+        this.gpuMs = this.gpuMs < 0 ? ms : this.gpuMs * 0.9 + ms * 0.1;
+      }
+      gl.deleteQuery(qq2);
+      this.queries.splice(i, 1);
+    }
+    if (!ext || this.queries.length > 3) return null;
+    const qq = gl.createQuery();
+    if (!qq) return null;
+    gl.beginQuery(ext.TIME_ELAPSED_EXT, qq);
+    return qq;
+  }
+  endGpu(qq) {
+    if (!qq) return;
+    const gl = this.renderer.getContext();
+    gl.endQuery(this.timer.TIME_ELAPSED_EXT);
+    this.queries.push(qq);
+  }
+  /** Many copies of one thing, culled per copy: trees, lamps, crates, crowds of props. */
+  instances(geometry, material, opts) {
+    const i = new Instances(geometry, material, this.scene, opts);
+    this.inst.push(i);
+    return i;
+  }
+  /** Merge static meshes under root into one mesh per material per ground cell. */
+  bake(root, opts) {
+    return bake(root, opts);
+  }
+  /** Redraw the sun's shadows every n frames (1 = always; 0 = by quality). Call refreshShadows() after a big change. */
+  shadowEvery(n) {
+    this.shadowN = Math.max(0, Math.round(n));
+  }
+  refreshShadows() {
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+  /** fn(scale) now and whenever the resolution scale changes (0.5..1). For your own pipeline. */
+  onScale(fn) {
+    this.scaleFns.push(fn);
+    fn(this.scale);
+  }
+  get renderScale() {
+    return this.scale;
   }
   /** Brighten the floor grid for a moment (beats, shockwaves). */
   pulse(v = 0.6) {
@@ -4762,39 +5338,63 @@ var Render3D = class {
   get level() {
     return this.quality;
   }
-  /** Set quality yourself (0..3); adaptive changes continue unless adaptive is false. */
+  /** Set quality yourself (0..3) at full resolution; adaptive changes continue unless adaptive is false. */
   setQuality(q) {
-    this.quality = Math.max(0, Math.min(3, Math.round(q)));
-    this.qualityMax = Math.max(this.qualityMax, this.quality);
-    this.applyQuality();
+    q = Math.max(0, Math.min(3, Math.round(q)));
+    if (q > this.qualityMax) {
+      this.qualityMax = q;
+      this.makeLadder();
+    }
+    const i = this.ladder.findIndex(([lq]) => lq === q);
+    this.failed.clear();
+    this.goStep(i < 0 ? this.ladder.length - 1 : i, "set");
   }
-  adapt(dt) {
+  /**
+   * Adaptive quality, once a second: above lowerAbove ms a frame, one step down the ladder
+   * (resolution first, then effects); below raiseBelow for three seconds, one step up unless that
+   * step was already too slow. A setting that holds for 20 s is kept for the next start.
+   */
+  adapt(_dt) {
     if (this.g.state !== "play" && this.g.state !== "title") return;
     const ad = this.g.opts.adaptive;
     if (ad === false) return;
+    const now = performance.now();
+    if (now < this.evalAt) return;
+    this.evalAt = now + 1e3;
     const lower = typeof ad === "object" ? ad.lowerAbove ?? 24 : 24;
-    const raise = typeof ad === "object" ? ad.raiseBelow ?? 11 : 11;
-    this.frameMs.push(dt * 1e3 / Math.max(this.g.timeScale, 0.05));
-    if (this.frameMs.length < 120) return;
-    const real = this.g.frameMs;
-    this.frameMs.length = 0;
-    if (real > lower && this.quality > 0) {
-      this.quality--;
-      this.applyQuality();
-      this.g._note(`quality lowered to ${this.quality} (frame time ${real.toFixed(0)} ms)`);
-    } else if (real < raise && this.quality < this.qualityMax && !this.raisedOnce) {
-      this.raisedOnce = true;
-      this.quality++;
-      this.applyQuality();
+    const raise = typeof ad === "object" ? ad.raiseBelow ?? 18 : 18;
+    const ms = this.g.frameMs;
+    if (ms > lower && this.step < this.ladder.length - 1) {
+      this.failed.add(this.step);
+      this.calm = 0;
+      this.goStep(this.step + (ms > lower * 2 ? 2 : 1), `frame time ${ms.toFixed(0)} ms`);
+      return;
+    }
+    if (ms < raise) {
+      if (++this.calm >= 3 && this.step > 0 && !this.failed.has(this.step - 1)) {
+        this.calm = 0;
+        this.goStep(this.step - 1, `frame time ${ms.toFixed(0)} ms`);
+        return;
+      }
+    } else this.calm = 0;
+    if (++this.stableFor === 20 && this.step !== this.savedStep) {
+      this.savedStep = this.step;
+      save(this.perfKey, { step: this.step });
     }
   }
   describe() {
     const info = this.renderer.info;
     return {
-      renderer: "three.js r" + THREE.REVISION,
+      renderer: "three.js r" + THREE2.REVISION,
       quality: this.quality,
+      scale: this.scale,
       bloom: !!this.composer,
       shadows: this.renderer.shadowMap.enabled,
+      shadowsPerSec: this.shadowRate,
+      submitMs: +this.submitMs.toFixed(1),
+      gpuMs: this.gpuMs < 0 ? null : +this.gpuMs.toFixed(1),
+      culled: this.culledEntities,
+      instances: this.inst.reduce((a, i) => a + i.visible, 0) + "/" + this.inst.reduce((a, i) => a + i.count, 0),
       pixelRatio: this.renderer.getPixelRatio(),
       drawCalls: info.render.calls,
       triangles: info.render.triangles,
@@ -4804,58 +5404,8 @@ var Render3D = class {
   }
 };
 
-// src/storage.ts
-var mem = {};
-function kimi() {
-  return globalThis.kimi;
-}
-async function load(key, fallback) {
-  try {
-    const k = kimi();
-    if (k?.storage?.get) {
-      const v = await Promise.race([
-        Promise.resolve(k.storage.get(key)),
-        new Promise((r) => setTimeout(() => r(void 0), 800))
-      ]);
-      if (v !== void 0 && v !== null) return v;
-    }
-  } catch {
-  }
-  try {
-    const raw = localStorage.getItem("kimi-game:" + key);
-    if (raw) return JSON.parse(raw);
-  } catch {
-  }
-  return mem[key] ?? fallback;
-}
-async function save(key, value) {
-  mem[key] = value;
-  try {
-    const k = kimi();
-    if (k?.storage?.set) await Promise.resolve(k.storage.set(key, value));
-  } catch {
-  }
-  try {
-    localStorage.setItem("kimi-game:" + key, JSON.stringify(value));
-  } catch {
-  }
-}
-async function addHighScore(game2, score, note) {
-  const key = "hi:" + game2;
-  const list = await load(key, []);
-  const entry = { score: Math.round(score), at: (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), note };
-  list.push(entry);
-  list.sort((a, b) => b.score - a.score);
-  const top = list.slice(0, 5);
-  await save(key, top);
-  return { list: top, rank: top.indexOf(entry) };
-}
-async function highScores(game2) {
-  return load("hi:" + game2, []);
-}
-
 // src/game.ts
-var VERSION = "0.2.0";
+var VERSION = "0.3.0";
 var STEP = 1 / 60;
 var Game = class {
   opts;
@@ -5133,6 +5683,27 @@ var Game = class {
       setQuality: (q) => r.setQuality(q),
       get quality() {
         return r.level;
+      },
+      /** Many copies of one thing in one draw, culled per copy: trees, lamps, crates. */
+      instances: (geometry, material, o) => r.instances(geometry, material, o),
+      /** Merge the static meshes under a group: one mesh per material per ground cell. */
+      bake: (root, o) => r.bake(root, o),
+      /** Redraw shadows every n frames (0: by quality); refreshShadows() after a big change. */
+      shadowEvery: (n) => r.shadowEvery(n),
+      refreshShadows: () => r.refreshShadows(),
+      /** fn(scale 0.5..1) now and when the adaptive resolution changes (for your own pipeline). */
+      onScale: (fn) => r.onScale(fn),
+      get scale() {
+        return r.renderScale;
+      },
+      /** Pixel ratio a quality level uses before the scale. */
+      pixelRatio: (q) => r.basePixelRatio(q),
+      /** Hide entity meshes beyond this distance from the camera (0: never; per entity: { cull: m }). */
+      get cullDistance() {
+        return r.cullDistance;
+      },
+      set cullDistance(v) {
+        r.cullDistance = v;
       }
     } : null;
   }
@@ -5149,10 +5720,11 @@ var Game = class {
   // ---------- loop ----------
   frame(now) {
     requestAnimationFrame((t) => this.frame(t));
-    const realDt = Math.min(0.1, Math.max(0, (now - this.last) / 1e3));
+    const rawDt = Math.max(0, (now - this.last) / 1e3);
+    const realDt = Math.min(0.1, rawDt);
     this.last = now;
-    if (realDt > 0) {
-      this.frameMs = this.frameMs * 0.92 + realDt * 1e3 * 0.08;
+    if (rawDt > 0 && rawDt < 2) {
+      this.frameMs = this.frameMs * 0.92 + rawDt * 1e3 * 0.08;
       this.fps = 1e3 / this.frameMs;
     }
     const running = this.state === "play" || this.state === "title" || this.state === "over";
@@ -5305,9 +5877,11 @@ function formatReport(r) {
   return [
     `${r.engine}  ${r.mode}  ${r.state}`,
     `scene ${r.scene}  t=${r.sceneTime}s  \xD7${r.timeScale}`,
-    `fps ${r.fps}  frame ${r.frameMs}ms  step ${r.stepMs}ms`,
-    rd.renderer + (rd.quality !== void 0 ? `  q${rd.quality}${rd.bloom ? " bloom" : ""}${rd.shadows ? " shadows" : ""}` : ""),
+    `fps ${r.fps}  frame ${r.frameMs}ms  step ${r.stepMs}ms` + (r.render.submitMs !== void 0 ? `
+draw (cpu) ${r.render.submitMs}ms  gpu ${r.render.gpuMs ?? "n/a"}${r.render.gpuMs !== null ? "ms" : ""}` : ""),
+    rd.renderer + (rd.quality !== void 0 ? `  q${rd.quality} \xD7${rd.scale}${rd.bloom ? " bloom" : ""}${rd.shadows ? ` shadows ${rd.shadowsPerSec}/s` : ""}` : ""),
     rd.drawCalls !== void 0 ? `draw calls ${rd.drawCalls}  tris ${rd.triangles}` : "",
+    rd.instances !== void 0 ? `instances ${rd.instances}  culled ${rd.culled}` : "",
     `particles ${rd.particles}  collisions/s ${r.collisionsPerSec}`,
     `entities ${r.entities}`,
     tagLines,
@@ -5352,6 +5926,7 @@ export {
   Entity,
   Game,
   Input,
+  Instances,
   KITS,
   PRESETS,
   SHAPES_2D,
@@ -5362,6 +5937,7 @@ export {
   addHighScore,
   ai,
   angleDiff,
+  bake,
   clamp,
   game,
   highScores,

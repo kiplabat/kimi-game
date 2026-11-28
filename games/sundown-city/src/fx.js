@@ -85,6 +85,43 @@ class Decals {
   }
 }
 
+/**
+ * Contact shadows: a soft dark patch under every car and person on screen, in one draw call.
+ * They ground things when the sun's shadow map is off (low quality) or too coarse to show it.
+ */
+export class ContactShadows {
+  constructor(scene, cap = 160) {
+    const tex = canvasTexture(64, 64, (c, w, h) => {
+      const gr = c.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+      gr.addColorStop(0, "rgba(0,0,0,0.85)"); gr.addColorStop(0.55, "rgba(0,0,0,0.45)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = gr; c.fillRect(0, 0, w, h);
+    });
+    tex.repeat.set(1, 1);
+    const m = new THREE.MeshBasicMaterial({ map: tex, color: 0x000000, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+    m.toneMapped = false;
+    this.mesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), m, cap);
+    this.mesh.frustumCulled = false;
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.count = 0;
+    this.mesh.renderOrder = 1;
+    scene.add(this.mesh);
+    this.n = 0;
+    this._m = new THREE.Matrix4(); this._q = new THREE.Quaternion(); this._p = new THREE.Vector3(); this._s = new THREE.Vector3(); this._e = new THREE.Euler();
+  }
+  begin() { this.n = 0; }
+  add(x, y, z, sx, sz, rot) {
+    if (this.n >= this.mesh.instanceMatrix.count) return;
+    this._q.setFromEuler(this._e.set(0, -rot, 0));
+    this.mesh.setMatrixAt(this.n++, this._m.compose(this._p.set(x, y + 0.03, z), this._q, this._s.set(sx, 1, sz)));
+  }
+  end() {
+    const im = this.mesh;
+    im.count = this.n;
+    im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, this.n * 16);
+    im.instanceMatrix.needsUpdate = true;
+  }
+}
+
 export class FX {
   constructor(g, scene) {
     this.g = g; this.three = g.three.scene;
@@ -114,7 +151,10 @@ export class FX {
     }
     this.burning = []; // wrecks that keep burning
     this.cam = g.three.camera;
+    this.contact = new ContactShadows(this.three);
   }
+  /** Lights for flashes and fires: fewer at low quality (every light costs every lit pixel). */
+  setQuality(q) { const n = [1, 1, 3, 4][q]; this.lights.forEach((l, i) => (l.visible = i < n)); }
   starTexture() {
     return canvasTexture(64, 64, (c, w, h) => {
       c.translate(w / 2, h / 2);

@@ -6,15 +6,92 @@
 import * as THREE from "three";
 import { HALF, PITCH, N } from "./layout.js";
 
+// Noise comes from a small tiling texture, made once: a texture lookup instead of 16 hashes per
+// fbm call (the ground used about 60 per pixel), and mipmaps keep it from shimmering far away.
+//   r: fbm (4 octaves) · g: value noise · b: a second fbm. One tile is 16 world units.
+export const NOISE_TEX = (() => {
+  const S = 256, out = new Uint8Array(S * S * 4);
+  const lattice = (seed, n) => { let x = seed * 9301 + 49297; const a = new Float32Array(n * n); for (let i = 0; i < n * n; i++) { x = (x * 1103515245 + 12345) % 2147483648; a[i] = x / 2147483648; } return a; };
+  const tables = {};
+  const vn = (u, v, n, seed) => { // u, v in 0..1 over the tile; n lattice cells across it (wrapping)
+    const L = (tables[seed + ":" + n] ??= lattice(seed + n * 7, n));
+    const x = u * n, y = v * n, i = Math.floor(x), j = Math.floor(y);
+    let fx = x - i, fy = y - j; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+    const at = (a, b) => L[((b % n) * n) + (a % n)];
+    const top = at(i, j) + (at(i + 1, j) - at(i, j)) * fx, bot = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * fx;
+    return top + (bot - top) * fy;
+  };
+  const fbm = (u, v, seed) => 0.5 * vn(u, v, 16, seed) + 0.25 * vn(u, v, 32, seed + 1) + 0.125 * vn(u, v, 64, seed + 2) + 0.0625 * vn(u, v, 128, seed + 3);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const u = x / S, v = y / S, k = (y * S + x) * 4;
+    out[k] = fbm(u, v, 1) * 255 / 0.9375 * 0.9375; out[k + 1] = vn(u, v, 16, 11) * 255; out[k + 2] = fbm(u, v, 21) * 255; out[k + 3] = 255;
+  }
+  const t = new THREE.DataTexture(out, S, S, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true;
+  t.needsUpdate = true;
+  return t;
+})();
 const NOISE = /* glsl */ `
+uniform sampler2D uNoise;
 float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vnoise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1,0)), f.x), mix(h21(i + vec2(0,1)), h21(i + vec2(1,1)), f.x), f.y); }
-float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * vnoise(p); p *= 2.03; a *= 0.5; } return v; }
+float vnoise(vec2 p){ return texture2D(uNoise, p * 0.0625).g; }
+float fbm(vec2 p){ return texture2D(uNoise, p * 0.0625).r; }
+float fbm2(vec2 p){ return texture2D(uNoise, p * 0.0625).b; }
 `;
 
-/** Shared uniforms the sky updates (night 0..1 lights windows and lamps). */
-export const WORLD = { uNight: { value: 0 }, uTime: { value: 0 } };
+/** Shared uniforms the sky updates (night 0..1 lights windows and lamps); uDetail 0..1 by quality. */
+export const WORLD = { uNight: { value: 0 }, uTime: { value: 0 }, uDetail: { value: 1 } };
+
+// ---------------------------------------------------------------------------
+// The city map: lighting baked once, the way games bake lightmaps.
+//   R: ambient occlusion on the ground (soft darkening where walls, kerbs, trees and posts meet it)
+//   G: the pools of light under street lamps (lit at night, no real light needed)
+// One texture, one lookup, for the ground and the bottom of every wall.
+// ---------------------------------------------------------------------------
+const MAP_E = HALF + 40;
+const white = new THREE.DataTexture(new Uint8Array([255, 0, 0, 255]), 1, 1); white.needsUpdate = true;
+export const CITY = { uCityMap: { value: white }, uCityK: { value: new THREE.Vector4(-MAP_E, -MAP_E, 2 * MAP_E, 2 * MAP_E) } };
+const CITY_GLSL = /* glsl */ `
+  uniform sampler2D uCityMap; uniform vec4 uCityK;
+  vec4 cityMap(vec2 xz) { return texture2D(uCityMap, (xz - uCityK.xy) / uCityK.zw); }
+  const vec3 LAMP = vec3(1.0, 0.68, 0.38);`;
+
+export function bakeCityMap(w) {
+  const S = 1024, k = S / (2 * MAP_E);
+  const X = (x) => (x + MAP_E) * k;
+  const mk = () => { const c = document.createElement("canvas"); c.width = c.height = S; return [c, c.getContext("2d")]; };
+  // ambient occlusion: everything standing on the ground, drawn dark and blurred twice (wide and tight)
+  const [ao, a] = mk();
+  a.fillStyle = "#fff"; a.fillRect(0, 0, S, S);
+  const stand = w.colliders.filter((c) => c.y0 < 0.6 && c.y1 - c.y0 > 0.5);
+  for (const [blur, alpha, grow] of [[6, 0.42, 1.2], [1.5, 0.38, 0.25]]) {
+    a.filter = `blur(${blur}px)`;
+    a.globalAlpha = alpha;
+    a.fillStyle = "#000";
+    for (const c of stand) a.fillRect(X(c.x0 - grow), X(c.z0 - grow), (c.x1 - c.x0 + 2 * grow) * k, (c.z1 - c.z0 + 2 * grow) * k);
+  }
+  a.filter = "blur(4px)"; a.globalAlpha = 0.3;
+  for (const [x, z, s] of w.treeSpots ?? []) { a.beginPath(); a.arc(X(x), X(z), 2.6 * s * k, 0, Math.PI * 2); a.fill(); }
+  // lamp pools
+  const [lp, l] = mk();
+  l.fillStyle = "#000"; l.fillRect(0, 0, S, S);
+  l.globalCompositeOperation = "lighter";
+  for (const [x, y, z] of w.lampLights) {
+    if (y > 8) continue;
+    const r = 9 * k, gr = l.createRadialGradient(X(x), X(z), 0, X(x), X(z), r);
+    gr.addColorStop(0, "rgba(255,255,255,0.9)"); gr.addColorStop(0.35, "rgba(255,255,255,0.45)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    l.fillStyle = gr; l.beginPath(); l.arc(X(x), X(z), r, 0, Math.PI * 2); l.fill();
+  }
+  const A = a.getImageData(0, 0, S, S).data, L = l.getImageData(0, 0, S, S).data;
+  const out = new Uint8Array(S * S * 4);
+  for (let i = 0; i < S * S; i++) { out[i * 4] = A[i * 4]; out[i * 4 + 1] = L[i * 4]; out[i * 4 + 3] = 255; }
+  const t = new THREE.DataTexture(out, S, S, THREE.RGBAFormat);
+  t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true;
+  t.needsUpdate = true;
+  CITY.uCityMap.value = t;
+  return t;
+}
 
 function worldPosVarying(shader, instanced) {
   shader.vertexShader = shader.vertexShader
@@ -47,13 +124,16 @@ export function groundMaterial(plan) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85, metalness: 0 });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uBlocks = { value: blocks };
+    shader.uniforms.uNoise = { value: NOISE_TEX };
     shader.uniforms.uNight = WORLD.uNight;
+    Object.assign(shader.uniforms, CITY);
     worldPosVarying(shader, false);
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
         varying vec3 vWPos; varying vec3 vWNrm; varying float vSeed; varying float vH;
         uniform sampler2D uBlocks; uniform float uNight;
         ${NOISE}
+        ${CITY_GLSL}
         const float HALF = ${HALF.toFixed(1)}; const float PITCH = ${PITCH.toFixed(1)};
         float gRough = 0.85;
         vec3 groundCol(vec2 p) {
@@ -70,6 +150,10 @@ export function groundMaterial(plan) {
             vec3 c = vec3(0.055, 0.057, 0.062) * (0.78 + 0.45 * n) + 0.02 * n2;
             c = mix(c, vec3(0.035), smoothstep(0.6, 0.75, fbm(p * 0.08 + 7.0)) * 0.6); // patches
             gRough = 0.78 + 0.2 * n2;
+            // puddles and damp patches: darker, and smooth enough to mirror the sky and the lights
+            float wet = smoothstep(0.58, 0.66, fbm2(p * 0.045 + 3.0));
+            c *= 1.0 - 0.45 * wet;
+            gRough = mix(gRough, 0.05, wet);
             bool inter = rz && rx;
             float paint = 0.0;
             if (rz && !inter) {
@@ -125,9 +209,15 @@ export function groundMaterial(plan) {
       .replace("#include <map_fragment>", `#include <map_fragment>
         diffuseColor.rgb *= groundCol(vWPos.xz);`)
       .replace("#include <roughnessmap_fragment>", `#include <roughnessmap_fragment>
-        roughnessFactor = gRough;`);
+        roughnessFactor = gRough;
+        vec4 cm = cityMap(vWPos.xz);`)
+      .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
+        totalEmissiveRadiance += diffuseColor.rgb * LAMP * cm.g * cm.g * uNight * 5.0;`)
+      .replace("#include <aomap_fragment>", `#include <aomap_fragment>
+        reflectedLight.indirectDiffuse *= cm.r; reflectedLight.indirectSpecular *= cm.r;
+        reflectedLight.directDiffuse *= mix(1.0, cm.r, 0.5);`);
   };
-  m.customProgramCacheKey = () => "nyota-ground";
+  m.customProgramCacheKey = () => "city-ground";
   return m;
 }
 
@@ -148,13 +238,45 @@ export function facadeMaterial(styleName, opts = {}) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0, envMapIntensity: 1 });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uNight = WORLD.uNight;
+    shader.uniforms.uDetail = WORLD.uDetail;
+    shader.uniforms.uNoise = { value: NOISE_TEX };
+    Object.assign(shader.uniforms, CITY);
     worldPosVarying(shader, true);
     shader.fragmentShader = shader.fragmentShader
       .replace("#include <common>", `#include <common>
         varying vec3 vWPos; varying vec3 vWNrm; varying float vSeed; varying float vH;
-        uniform float uNight;
+        uniform float uNight, uDetail;
         ${NOISE}
+        ${CITY_GLSL}
         float fRough = 0.8, fMetal = 0.0; vec3 fEmit = vec3(0.0);
+        // Interior mapping: a room behind every window, found by casting the view ray into a box
+        // (back wall, side walls, floor, ceiling) in the window's own coordinates. No geometry.
+        vec3 room(vec2 uv, vec3 n, float w, float h, float dep, vec2 id, float light, vec3 lcol) {
+          vec3 t = abs(n.x) > 0.5 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+          vec3 V = normalize(vWPos - cameraPosition);
+          vec3 r = vec3(dot(V, t) / w, V.y / h, max(dot(V, -n), 0.02) / dep);
+          r.xy = sign(r.xy) * max(abs(r.xy), vec2(1e-4));
+          vec3 p = vec3(clamp(uv, 0.002, 0.998), 0.0);
+          vec3 tt = (vec3(step(0.0, r.x), step(0.0, r.y), 1.0) - p) / r;
+          float hue = h21(id + 3.7);
+          vec3 wallC = hue < 0.3 ? vec3(0.62, 0.55, 0.45) : hue < 0.55 ? vec3(0.55, 0.57, 0.58) : hue < 0.8 ? vec3(0.45, 0.52, 0.58) : vec3(0.5, 0.56, 0.44);
+          vec3 col, hp;
+          if (tt.z <= tt.x && tt.z <= tt.y) {
+            hp = p + r * tt.z;
+            col = wallC;
+            if (abs(hp.x - 0.5 + (hue - 0.5) * 0.4) < 0.16 && abs(hp.y - 0.55) < 0.13) col = vec3(0.2, 0.3, 0.4) + 0.4 * vec3(hue, 1.0 - hue, 0.5); // a picture
+            if (hp.y < 0.32 && abs(hp.x - 0.5) < 0.3) col = vec3(0.16, 0.12, 0.1);      // a sofa or a desk against it
+          } else if (tt.y < tt.x) {
+            hp = p + r * tt.y;
+            col = r.y < 0.0 ? vec3(0.24, 0.16, 0.1) * (0.8 + 0.25 * h21(floor(hp.xz * vec2(5.0, 3.0)))) : vec3(0.82, 0.8, 0.76);
+          } else {
+            hp = p + r * tt.x;
+            col = wallC * 0.82;
+          }
+          float lamp = light * (0.55 + 0.7 * smoothstep(0.8, 0.0, length(vec2(hp.x, hp.z) - vec2(0.5, 0.55))));
+          vec3 day = vec3(0.5, 0.58, 0.7) * 0.22 * (1.0 - uNight) * (1.0 - 0.55 * hp.z);
+          return col * (lcol * lamp + day) * (1.0 - 0.45 * hp.z);
+        }
         vec3 facade(vec3 base) {
           vec3 n = normalize(vWNrm);
           if (n.y > 0.5) { fRough = 0.95; return vec3(0.22, 0.22, 0.21) * (0.8 + 0.4 * vnoise(vWPos.xz * 1.7)); }   // roof
@@ -173,10 +295,17 @@ export function facadeMaterial(styleName, opts = {}) {
             if (v > 3.7) { fRough = 0.6; return mix(vec3(0.6, 0.12, 0.08), vec3(0.1, 0.3, 0.55), step(0.5, vSeed)) * 0.8; } // signboard band
             float sc = fract(u / 6.0);
             if (v > 0.15 && v < 3.4 && sc > 0.06 && sc < 0.94) {                      // shop window
-              fRough = 0.05; fMetal = 0.9;
               float lit = step(0.35, h21(vec2(floor(u / 6.0), vSeed * 91.0)));
-              fEmit = vec3(1.0, 0.78, 0.5) * lit * (0.08 + 0.55 * uNight);
-              return vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")});
+              if (uDetail < 0.5) {
+                fRough = 0.05; fMetal = 0.9;
+                fEmit = vec3(1.0, 0.78, 0.5) * lit * (0.08 + 0.55 * uNight);
+                return vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")});
+              }
+              vec2 suv = vec2((sc - 0.06) / 0.88, (v - 0.15) / 3.25);
+              vec3 inside = room(suv, n, 6.0 * 0.88, 3.25, 5.0, vec2(floor(u / 6.0), vSeed * 91.0), lit * (0.35 + 0.9 * uNight), vec3(1.0, 0.82, 0.6));
+              fRough = 0.04; fMetal = 0.0;
+              fEmit = inside;
+              return vec3(0.012);
             }
             fRough = 0.7;
             return wall * 0.6;
@@ -185,19 +314,37 @@ export function facadeMaterial(styleName, opts = {}) {
           // glass tower: continuous glass with thin mullions and floor bands
           float mull = step(c.x, FR) + step(abs(c.y - 0.02), 0.03);
           if (mull > 0.5) { fRough = 0.4; fMetal = 0.6; return vec3(0.18, 0.2, 0.22); }
-          fRough = 0.03; fMetal = 1.0;
           float lit = step(0.76, h21(cell + vSeed * 37.0));
-          fEmit = mix(vec3(1.0, 0.85, 0.6), vec3(0.7, 0.85, 1.0), h21(cell.yx + 3.0)) * lit * uNight * 0.5;
-          return vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")}) * (0.8 + 0.4 * h21(cell * 1.3));` : `
+          vec3 lcol = mix(vec3(1.0, 0.85, 0.6), vec3(0.7, 0.85, 1.0), h21(cell.yx + 3.0));
+          if (uDetail < 0.5) {
+            fRough = 0.03; fMetal = 1.0;
+            fEmit = lcol * lit * uNight * 0.5;
+            return vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")}) * (0.8 + 0.4 * h21(cell * 1.3));
+          }
+          // tinted, half-mirrored office glass: the sky by day at an angle, the offices behind it
+          vec3 inside = room(vec2((c.x - FR) / (1.0 - FR), (c.y - 0.05) / 0.95), n, WW * (1.0 - FR), FH * 0.95, WW * 2.2, cell + vSeed * 7.0, lit * uNight * 1.0, lcol);
+          fRough = 0.03; fMetal = 0.55;
+          fEmit = inside * 0.55;
+          return vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")}) * (1.6 + 0.6 * h21(cell * 1.3));` : `
           bool win = c.x > FR && c.x < 1.0 - FR && c.y > 0.3 && c.y < 0.86 && v > 1.2;
           if (win) {
             float sill = step(c.y, 0.33);
             if (sill > 0.5) { fRough = 0.6; return vec3(0.75); }
-            fRough = 0.06; fMetal = 0.85;
             float lit = step(0.66, h21(cell + vSeed * 37.0));
+            vec3 lcol = mix(vec3(1.0, 0.75, 0.45), vec3(0.75, 0.85, 1.0), step(0.8, h21(cell.yx)));
             float curtain = step(0.7, h21(cell * 2.1 + 9.0));
-            fEmit = mix(vec3(1.0, 0.75, 0.45), vec3(0.75, 0.85, 1.0), step(0.8, h21(cell.yx))) * lit * uNight * (curtain > 0.5 ? 0.25 : 0.55);
-            return mix(vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")}), vec3(0.5, 0.45, 0.38), curtain * 0.6);
+            if (uDetail < 0.5) {
+              fRough = 0.06; fMetal = 0.85;
+              fEmit = lcol * lit * uNight * (curtain > 0.5 ? 0.25 : 0.55);
+              return mix(vec3(${st.glassTint.map((x) => x.toFixed(3)).join(",")}), vec3(0.5, 0.45, 0.38), curtain * 0.6);
+            }
+            vec2 wuv = vec2((c.x - FR) / (1.0 - 2.0 * FR), (c.y - 0.33) / 0.53);
+            vec3 inside = room(wuv, n, WW * (1.0 - 2.0 * FR), FH * 0.53, WW * 1.1, cell + vSeed * 13.0, lit * uNight * 1.3, lcol);
+            float blind = step(1.0 - h21(cell * 2.1 + 9.0) * 0.7, wuv.y);              // blinds pulled part way down
+            inside = mix(inside, vec3(0.62, 0.58, 0.5) * (0.12 * (1.0 - uNight) + lcol * lit * uNight * 0.45) * (0.85 + 0.15 * step(0.5, fract(wuv.y * 18.0))), blind);
+            fRough = 0.04; fMetal = 0.0;
+            fEmit = inside;
+            return vec3(0.012);
           }
           ${styleName === "brick" ? `
           vec2 b = vec2(u * 4.0 + step(1.0, mod(floor(v * 12.0), 2.0)) * 0.5, v * 12.0);
@@ -231,9 +378,16 @@ export function facadeMaterial(styleName, opts = {}) {
       .replace("#include <metalnessmap_fragment>", `#include <metalnessmap_fragment>
         metalnessFactor = fMetal;`)
       .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
-        totalEmissiveRadiance += fEmit;`);
+        vec3 fn = normalize(vWNrm);
+        vec4 cm = cityMap(vWPos.xz + fn.xz * 1.2);
+        float low = exp(-max(vWPos.y, 0.0) / 2.2);
+        float fAO = abs(fn.y) > 0.5 ? 1.0 : mix(1.0, cm.r, low * 0.8) * mix(0.62, 1.0, smoothstep(0.0, 2.6, vWPos.y));
+        totalEmissiveRadiance += fEmit + diffuseColor.rgb * LAMP * cm.g * uNight * 3.0 * exp(-max(vWPos.y - 0.5, 0.0) / 4.0);`)
+      .replace("#include <aomap_fragment>", `#include <aomap_fragment>
+        reflectedLight.indirectDiffuse *= fAO; reflectedLight.indirectSpecular *= mix(1.0, fAO, 0.5);
+        reflectedLight.directDiffuse *= mix(1.0, fAO, 0.35);`);
   };
-  m.customProgramCacheKey = () => "nyota-facade-" + styleName + (opts.height ?? "");
+  m.customProgramCacheKey = () => "city-facade-" + styleName + (opts.height ?? "");
   if (opts.height) m.color = new THREE.Color(...st.wall); // a single building: its own wall colour
   return m;
 }
@@ -289,12 +443,12 @@ export function canvasTexture(w, h, draw, repeat = 1) {
 
 /** Billboards: original brands only. */
 const ADS = [
-  ["NYOTA COLA", "ice cold since 1963", "#c81e2b", "#fff"],
-  ["MATATU EXPRESS", "every route · every day", "#1b9e5a", "#ffe14d"],
-  ["SIMBA DATA", "4G everywhere you roam", "#ffb300", "#1a1a1a"],
+  ["NOVA COLA", "ice cold since 1963", "#c81e2b", "#fff"],
+  ["METRO EXPRESS", "every route · every day", "#1b9e5a", "#ffe14d"],
+  ["SUMMIT DATA", "5G everywhere you roam", "#ffb300", "#1a1a1a"],
   ["KIMI OS", "talk to your computer", "#101828", "#36e2ff"],
-  ["MAZIWA FRESH", "milk from the highlands", "#f4f1ea", "#1f6fb2"],
-  ["BODA SAFE", "helmets save lives", "#ff5a1f", "#fff"],
+  ["FRESHDAY MILK", "from the valley farms", "#f4f1ea", "#1f6fb2"],
+  ["RIDE SAFE", "helmets save lives", "#ff5a1f", "#fff"],
 ];
 export function adTexture(i) {
   const [title, sub, bg, fg] = ADS[i % ADS.length];
@@ -320,8 +474,8 @@ function shade(hex, k) {
   return "#" + c.getHexString();
 }
 
-/** A matatu's painted side: bright colours and a name, the way Nairobi's are. */
-const MATATU_NAMES = ["NYOTA", "MOTO MOTO", "BARAKA", "SAFARI", "TUKO PAMOJA", "KASI"];
+/** A minibus's painted side: bright colours and a route name. */
+const LIVERY_NAMES = ["STARLINE", "NIGHT OWL", "BLUE ROUTE", "EXPRESS 9", "CITY HOPPER", "FASTLANE"];
 export function liveryTexture(i) {
   const palettes = [["#ffd60a", "#e63946", "#1d3557"], ["#06d6a0", "#118ab2", "#073b4c"], ["#ff006e", "#8338ec", "#ffbe0b"], ["#f77f00", "#fcbf49", "#003049"]];
   const [a, b, d] = palettes[i % palettes.length];
@@ -333,7 +487,7 @@ export function liveryTexture(i) {
     c.fillRect(0, h * 0.88, w, h * 0.12);
     c.font = "italic 900 54px system-ui, sans-serif";
     c.fillStyle = "#fff"; c.strokeStyle = d; c.lineWidth = 6;
-    const name = MATATU_NAMES[i % MATATU_NAMES.length];
+    const name = LIVERY_NAMES[i % LIVERY_NAMES.length];
     c.strokeText(name, 30, 74); c.fillText(name, 30, 74);
   });
 }

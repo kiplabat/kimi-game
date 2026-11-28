@@ -10,6 +10,8 @@ import type { Entity } from "./entity";
 import type { Game } from "./game";
 import type { Renderer, CameraCtl, BurstOpts, BeamOpts, RingOpts, Rect } from "./renderer";
 import { lerp, angleLerp, rng } from "./math";
+import { Instances, bake, type InstanceOpts, type BakeOpts } from "./big";
+import { load, save } from "./storage";
 
 export const PRESETS: Record<string, { sky: [string, string]; fog: string; fogDensity: number; floor: string; grid: string; hemi: [string, string, number]; sun: [string, number]; bloom: number; exposure: number; stars: boolean; glow: number }> = {
   neon: { sky: ["#02030b", "#0b0f2e"], fog: "#060918", fogDensity: 0.018, floor: "#05070f", grid: "#2fd7ff", hemi: ["#5a6cff", "#08040f", 0.6], sun: ["#9fb3ff", 0.9], bloom: 1.05, exposure: 1.0, stars: true, glow: 0.9 },
@@ -404,10 +406,38 @@ export class Render3D implements Renderer {
   private v3 = new THREE.Vector3();
   private quality = 2;
   private qualityMax = 3;
-  private frameMs: number[] = [];
-  private raisedOnce = false;
   private pipeline?: (dt: number) => void;
   private qualityFns: ((q: number) => void)[] = [];
+  // resolution scale and the adaptive ladder: (quality, scale) from best to cheapest
+  private scale = 1;
+  private scaleFns: ((s: number) => void)[] = [];
+  private ladder: [number, number][] = [];
+  private step = 0;
+  private failed = new Set<number>();
+  private evalAt = 0;
+  private calm = 0;
+  private stableFor = 0;
+  private savedStep = -1;
+  private perfKey = "";
+  // shadows are redrawn every n frames (0: by quality)
+  private shadowN = 0;
+  private shadowFrame = 0;
+  private shadowCount = 0;
+  private shadowRate = 0;
+  private shadowAt = 0;
+  private inst: Instances[] = [];
+  private frustum = new THREE.Frustum();
+  private pv = new THREE.Matrix4();
+  private culledEntities = 0;
+  // where a frame's time goes: the CPU submitting the draw, and the GPU drawing it (when the
+  // browser exposes timer queries; Chrome often does not)
+  private submitMs = 0;
+  private gpuMs = -1;
+  private timer: any = null;
+  private queries: any[] = [];
+  private lastDraw = 0;
+  /** Entities with a mesh are hidden beyond this distance from the camera (0: never). Per entity: { cull: m }. */
+  cullDistance = 0;
   private modeCam: any = { kind: "topdown", e: null, height: 22, distance: 14, lerp: 5, lead: 0.35 };
   private camPos = new THREE.Vector3(0, 22, 14);
   private camLook = new THREE.Vector3();
@@ -454,7 +484,16 @@ export class Render3D implements Renderer {
     const cores = navigator.hardwareConcurrency ?? 4;
     this.quality = q === "low" ? 0 : q === "medium" ? 1 : q === "high" ? 3 : cores >= 8 ? 3 : 2;
     this.qualityMax = q === "auto" ? 3 : this.quality;
+    this.makeLadder();
+    this.step = this.ladder.findIndex(([lq]) => lq <= this.quality);
     this.applyQuality();
+    // the budget this machine settled on last time (measured once, kept)
+    this.perfKey = "perf:" + (g.opts.title ?? "game");
+    if (q === "auto" && g.opts.adaptive !== false) {
+      load<{ step?: number }>(this.perfKey, {}).then((v) => {
+        if (typeof v.step === "number" && v.step >= 0 && v.step < this.ladder.length) { this.savedStep = v.step; this.goStep(v.step, "kept from last time"); }
+      });
+    }
 
     const self = this;
     this.camera = {
@@ -473,10 +512,39 @@ export class Render3D implements Renderer {
     this.resize();
   }
 
+  private makeLadder() {
+    const all: [number, number][] = [[3, 1], [2, 1], [2, 0.85], [1, 1], [1, 0.85], [1, 0.7], [0, 1], [0, 0.85], [0, 0.7], [0, 0.6], [0, 0.5]];
+    const ad = this.g.opts.adaptive;
+    const min = typeof ad === "object" ? ad.minScale ?? 0.5 : 0.5;
+    this.ladder = all.filter(([q, s]) => q <= this.qualityMax && s >= min - 1e-6);
+  }
+  private goStep(i: number, why: string) {
+    i = Math.max(0, Math.min(this.ladder.length - 1, i));
+    const [q, sc] = this.ladder[i];
+    const changedQ = q !== this.quality, changedS = sc !== this.scale;
+    this.step = i;
+    this.stableFor = 0;
+    this.evalAt = performance.now() + 1500; // let shaders compile and the average settle
+    if (changedQ) { this.quality = q; this.scale = sc; this.applyQuality(); }
+    else if (changedS) { this.scale = sc; this.applyScale(); }
+    if (changedQ || changedS) this.g._note(`quality ${q} at ${Math.round(sc * 100)}% resolution (${why})`);
+  }
+  /** Pixel ratio for a quality level before the resolution scale. */
+  basePixelRatio(q = this.quality) {
+    const dpr = devicePixelRatio || 1;
+    return q >= 3 ? Math.min(2, dpr) : q === 2 ? Math.min(1.5, dpr) : q === 1 ? 1 : 0.75;
+  }
+  private applyScale() {
+    if (!this.pipeline) {
+      this.renderer.setPixelRatio(this.basePixelRatio() * this.scale);
+      this.resize();
+    }
+    for (const f of this.scaleFns) try { f(this.scale); } catch (err) { this.g._error(err); }
+  }
+
   private applyQuality() {
     const q = this.quality;
-    const dpr = devicePixelRatio || 1;
-    this.renderer.setPixelRatio(q >= 3 ? Math.min(2, dpr) : q === 2 ? Math.min(1.5, dpr) : q === 1 ? 1 : 0.75);
+    this.renderer.setPixelRatio(this.basePixelRatio(q) * this.scale);
     this.renderer.shadowMap.enabled = q >= 3;
     this.sun.castShadow = q >= 3;
     if (q >= 2 && this.g.opts.bloom !== false && this.preset.bloom > 0) {
@@ -495,6 +563,7 @@ export class Render3D implements Renderer {
     this.resize();
     // the game's own settings come last, so they win (shadows, pixel ratio, its own passes)
     for (const f of this.qualityFns) try { f(q); } catch (err) { this.g._error(err); }
+    for (const f of this.scaleFns) try { f(this.scale); } catch (err) { this.g._error(err); }
   }
 
   resize() {
@@ -623,11 +692,18 @@ export class Render3D implements Renderer {
     const g = this.g, s = g.current;
     const t = g.time;
     this.renderer.info.reset();
+    const cp = this.cam.position;
+    let culled = 0;
     if (s) {
       for (const e of s.entities) {
         const obj = e.visual as THREE.Object3D;
         if (!obj) continue;
         obj.visible = e.visible && !(e.invuln > 0 && Math.floor(e.invuln * 20) % 2);
+        const cd = e.opts.cull ?? this.cullDistance;
+        if (cd > 0 && obj.visible) {
+          const dx = e.x - cp.x, dy = e.y - cp.y, dz = e.z - cp.z;
+          if (dx * dx + dy * dy + dz * dz > cd * cd) { obj.visible = false; culled++; continue; }
+        }
         obj.position.set(lerp(e.ox, e.x, alpha), lerp(e.oy, e.y, alpha), lerp(e.oz, e.z, alpha));
         obj.rotation.y = -angleLerp(e.orot, e.rot, alpha);
         // a little life: bank when turning, spin parts
@@ -651,6 +727,7 @@ export class Render3D implements Renderer {
         if (!obj.userData.noScale && obj.userData.base) obj.scale.copy(obj.userData.base).multiplyScalar((e.opts.size ?? 1) * e.radius * e.scale);
       }
     }
+    this.culledEntities = culled;
     // camera
     const mc = this.modeCam;
     if (mc.kind === "manual") { this.renderFx(dt); return; }
@@ -728,11 +805,78 @@ export class Render3D implements Renderer {
       u.uT.value = t;
       u.uPulse.value = Math.max(0, u.uPulse.value - dt * 1.5);
     }
+    // per-copy culling of instances against this frame's camera
+    if (this.inst.length) {
+      this.cam.updateMatrixWorld();
+      this.pv.multiplyMatrices(this.cam.projectionMatrix, this.cam.matrixWorldInverse);
+      this.frustum.setFromProjectionMatrix(this.pv);
+      for (const i of this.inst) i.cull(this.cam, this.frustum);
+    }
+    // shadows: redrawn every frame at high quality, every other frame below (moving shadows at half rate)
+    const sm = this.renderer.shadowMap;
+    if (sm.enabled) {
+      sm.autoUpdate = false;
+      const every = this.shadowN || (this.quality >= 2 ? 1 : 2);
+      if (++this.shadowFrame >= every) { this.shadowFrame = 0; sm.needsUpdate = true; this.shadowCount++; }
+      const now = performance.now();
+      if (now - this.shadowAt > 1000) { this.shadowRate = this.shadowCount; this.shadowCount = 0; this.shadowAt = now; }
+    } else this.shadowRate = 0;
+    // paused: the picture does not change, so draw a few times a second instead of every frame
+    const nowT = performance.now();
+    if (this.g.state === "paused" && nowT - this.lastDraw < 200) return;
+    this.lastDraw = nowT;
+    const q = this.beginGpu();
+    const t0 = performance.now();
     if (this.pipeline) this.pipeline(dt);
     else if (this.composer) this.composer.render(dt);
     else this.renderer.render(this.scene, this.cam);
+    this.submitMs = this.submitMs * 0.9 + (performance.now() - t0) * 0.1;
+    this.endGpu(q);
     this.adapt(dt);
   }
+
+  private beginGpu() {
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    if (this.timer === null) this.timer = gl.getExtension("EXT_disjoint_timer_query_webgl2") ?? false;
+    const ext = this.timer;
+    // collect finished queries
+    for (let i = this.queries.length - 1; i >= 0; i--) {
+      const qq = this.queries[i];
+      if (!gl.getQueryParameter(qq, gl.QUERY_RESULT_AVAILABLE)) continue;
+      if (ext && !gl.getParameter(ext.GPU_DISJOINT_EXT)) {
+        const ms = (gl.getQueryParameter(qq, gl.QUERY_RESULT) as number) / 1e6;
+        this.gpuMs = this.gpuMs < 0 ? ms : this.gpuMs * 0.9 + ms * 0.1;
+      }
+      gl.deleteQuery(qq);
+      this.queries.splice(i, 1);
+    }
+    if (!ext || this.queries.length > 3) return null;
+    const qq = gl.createQuery();
+    if (!qq) return null;
+    gl.beginQuery(ext.TIME_ELAPSED_EXT, qq);
+    return qq;
+  }
+  private endGpu(qq: any) {
+    if (!qq) return;
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    gl.endQuery(this.timer.TIME_ELAPSED_EXT);
+    this.queries.push(qq);
+  }
+
+  /** Many copies of one thing, culled per copy: trees, lamps, crates, crowds of props. */
+  instances(geometry: THREE.BufferGeometry, material: THREE.Material, opts?: InstanceOpts) {
+    const i = new Instances(geometry, material, this.scene, opts);
+    this.inst.push(i);
+    return i;
+  }
+  /** Merge static meshes under root into one mesh per material per ground cell. */
+  bake(root: THREE.Object3D, opts?: BakeOpts) { return bake(root, opts); }
+  /** Redraw the sun's shadows every n frames (1 = always; 0 = by quality). Call refreshShadows() after a big change. */
+  shadowEvery(n: number) { this.shadowN = Math.max(0, Math.round(n)); }
+  refreshShadows() { this.renderer.shadowMap.needsUpdate = true; }
+  /** fn(scale) now and whenever the resolution scale changes (0.5..1). For your own pipeline. */
+  onScale(fn: (s: number) => void) { this.scaleFns.push(fn); fn(this.scale); }
+  get renderScale() { return this.scale; }
 
   /** Brighten the floor grid for a moment (beats, shockwaves). */
   pulse(v = 0.6) {
@@ -744,28 +888,40 @@ export class Render3D implements Renderer {
   /** Called with the new level (0 low … 3 ultra) whenever quality changes, and once at once. */
   onQuality(fn: (q: number) => void) { this.qualityFns.push(fn); fn(this.quality); }
   get level() { return this.quality; }
-  /** Set quality yourself (0..3); adaptive changes continue unless adaptive is false. */
-  setQuality(q: number) { this.quality = Math.max(0, Math.min(3, Math.round(q))); this.qualityMax = Math.max(this.qualityMax, this.quality); this.applyQuality(); }
+  /** Set quality yourself (0..3) at full resolution; adaptive changes continue unless adaptive is false. */
+  setQuality(q: number) {
+    q = Math.max(0, Math.min(3, Math.round(q)));
+    if (q > this.qualityMax) { this.qualityMax = q; this.makeLadder(); }
+    const i = this.ladder.findIndex(([lq]) => lq === q);
+    this.failed.clear();
+    this.goStep(i < 0 ? this.ladder.length - 1 : i, "set");
+  }
 
-  private adapt(dt: number) {
+  /**
+   * Adaptive quality, once a second: above lowerAbove ms a frame, one step down the ladder
+   * (resolution first, then effects); below raiseBelow for three seconds, one step up unless that
+   * step was already too slow. A setting that holds for 20 s is kept for the next start.
+   */
+  private adapt(_dt: number) {
     if (this.g.state !== "play" && this.g.state !== "title") return;
     const ad = this.g.opts.adaptive;
     if (ad === false) return;
+    const now = performance.now();
+    if (now < this.evalAt) return;
+    this.evalAt = now + 1000;
     const lower = typeof ad === "object" ? ad.lowerAbove ?? 24 : 24;
-    const raise = typeof ad === "object" ? ad.raiseBelow ?? 11 : 11;
-    this.frameMs.push(dt * 1000 / Math.max(this.g.timeScale, 0.05));
-    if (this.frameMs.length < 120) return;
-    const real = this.g.frameMs;
-    this.frameMs.length = 0;
-    if (real > lower && this.quality > 0) {
-      this.quality--;
-      this.applyQuality();
-      this.g._note(`quality lowered to ${this.quality} (frame time ${real.toFixed(0)} ms)`);
-    } else if (real < raise && this.quality < this.qualityMax && !this.raisedOnce) {
-      this.raisedOnce = true;
-      this.quality++;
-      this.applyQuality();
+    const raise = typeof ad === "object" ? ad.raiseBelow ?? 18 : 18;
+    const ms = this.g.frameMs;
+    if (ms > lower && this.step < this.ladder.length - 1) {
+      this.failed.add(this.step);
+      this.calm = 0;
+      this.goStep(this.step + (ms > lower * 2 ? 2 : 1), `frame time ${ms.toFixed(0)} ms`);
+      return;
     }
+    if (ms < raise) {
+      if (++this.calm >= 3 && this.step > 0 && !this.failed.has(this.step - 1)) { this.calm = 0; this.goStep(this.step - 1, `frame time ${ms.toFixed(0)} ms`); return; }
+    } else this.calm = 0;
+    if (++this.stableFor === 20 && this.step !== this.savedStep) { this.savedStep = this.step; save(this.perfKey, { step: this.step }); }
   }
 
   describe() {
@@ -773,8 +929,14 @@ export class Render3D implements Renderer {
     return {
       renderer: "three.js r" + THREE.REVISION,
       quality: this.quality,
+      scale: this.scale,
       bloom: !!this.composer,
       shadows: this.renderer.shadowMap.enabled,
+      shadowsPerSec: this.shadowRate,
+      submitMs: +this.submitMs.toFixed(1),
+      gpuMs: this.gpuMs < 0 ? null : +this.gpuMs.toFixed(1),
+      culled: this.culledEntities,
+      instances: this.inst.reduce((a, i) => a + i.visible, 0) + "/" + this.inst.reduce((a, i) => a + i.count, 0),
       pixelRatio: this.renderer.getPixelRatio(),
       drawCalls: info.render.calls,
       triangles: info.render.triangles,

@@ -185,3 +185,46 @@ test("static things stay hashed without being re-added, and tag-filtered solids"
   assert.ok(s.query(30, 500, 1).some((e) => e.has("post")), "found through the static hash");
   assert.equal(s.within("post", [30, 500], 1).length, 1);
 });
+
+// ---------- 0.3: big worlds ----------
+import * as THREE from "three";
+import { Instances, bake } from "../dist/kimi-game.js";
+
+test("instances draw only the copies in view, near ones always (for shadows), none past far", () => {
+  const scene = new THREE.Scene();
+  const inst = new Instances(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial(), scene, { far: 100, near: 10 });
+  inst.add(0, 0, -20);                       // ahead, in view
+  inst.add(0, 0, 20);                        // behind, outside the near radius
+  inst.add(3, 0, 4);                         // behind but near: kept for its shadow
+  inst.add(0, 0, -150);                      // ahead but past far
+  inst.add(5, 0, -30, { scale: [2, 3, 2], rotY: 1, color: "#ff0000" });
+  const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  cam.position.set(0, 0, 0); cam.lookAt(0, 0, -1); cam.updateMatrixWorld();
+  const fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  inst.cull(cam, fr);
+  assert.equal(inst.count, 5);
+  assert.equal(inst.mesh.count, 3);
+  assert.ok(inst.mesh.instanceColor, "colours follow the copies");
+  // nothing moved: no work, same result
+  inst.cull(cam, fr);
+  assert.equal(inst.mesh.count, 3);
+  // turn around
+  cam.lookAt(0, 0, 1); cam.updateMatrixWorld();
+  fr.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
+  inst.cull(cam, fr);
+  assert.equal(inst.mesh.count, 2); // the one behind (now ahead) and the near one
+});
+
+test("bake merges static meshes per material per cell and keeps them in place", () => {
+  const root = new THREE.Group();
+  root.position.set(10, 0, 0);
+  const a = new THREE.MeshStandardMaterial(), b = new THREE.MeshStandardMaterial();
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  for (let i = 0; i < 6; i++) { const m = new THREE.Mesh(box, i % 2 ? a : b); m.position.set(i * 2, 0, 0); root.add(m); }
+  const far = new THREE.Mesh(box, a); far.position.set(200, 0, 0); root.add(far);
+  const r = bake(root, { cell: 64 });
+  assert.equal(r.before, 7);
+  assert.equal(r.after, 3); // a and b near, a far
+  const all = new THREE.Box3().setFromObject(root);
+  assert.ok(Math.abs(all.min.x - (10 - 0.5)) < 1e-4 && Math.abs(all.max.x - (210 + 0.5)) < 1e-4, "same place as before");
+});

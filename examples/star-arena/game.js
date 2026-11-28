@@ -1,7 +1,6 @@
-// NYOTA ARENA — the kimi/game showcase. A 3D twin-stick arena where the computer plays too:
+// STAR ARENA — the kimi/game showcase. A 3D twin-stick arena where the computer plays too:
 // swarms that flock, hunters that lead their shots, snipers with a state machine, a boss,
 // bullet time, dash, combos, music that follows the fight, and an autopilot that flies for you.
-// (Nyota is Swahili for "star".)
 
 import { game, sprite, ai, sound } from "kimi/game";
 
@@ -10,12 +9,12 @@ const C = { me: "#36e2ff", shot: "#a8fbff", swarm: "#ff3d9a", hunter: "#ff8a3d",
 const R = 26; // arena radius
 
 const g = game({
-  title: "NYOTA ARENA", sub: "a kimi/game showcase", mode: "3d", arena: R, preset: "neon", accent: C.me,
+  title: "STAR ARENA", sub: "a kimi/game showcase", mode: "3d", arena: R, preset: "neon", accent: C.me,
   howto: [
     "Move [W][A][S][D] · aim with the mouse · hold click to fire",
     "[Space] dash: you can't be hurt mid-dash, and it rams",
-    "[Shift] Nyota time: the world slows down, you don't",
-    "Gamepad: twin sticks · [A] dash · [B] Nyota · [Y] autopilot",
+    "[Shift] Star time: the world slows down, you don't",
+    "Gamepad: twin sticks · [A] dash · [B] Star time · [Y] autopilot",
     "Touch: left thumb moves, right thumb aims and fires",
     "[T] let the computer fly",
   ],
@@ -32,7 +31,7 @@ function arena(s, demo) {
     wave: s.ui.text({ at: "top", label: "Wave", text: "1" }),
     pilot: s.ui.text({ at: "top-right", text: "", color: C.energy }),
     hp: s.ui.bar({ at: "bottom-left", label: "Hull", max: 5, color: C.me }),
-    nyota: s.ui.bar({ at: "bottom-left", label: "Nyota", max: 100, value: 40, color: C.energy }),
+    star: s.ui.bar({ at: "bottom-left", label: "Star", max: 100, value: 40, color: C.energy }),
     boss: s.ui.bar({ at: "top", label: "The Warden", max: 1, color: C.boss, width: "26em" }),
   };
   hud?.boss.show(false);
@@ -77,7 +76,7 @@ function arena(s, demo) {
     s.burst(p, { count: 14, color: C.me, speed: 9, dir: [-d[0], -d[1]], spread: 0.6 });
     sound.dash();
   }
-  function nyota() {
+  function starTime() {
     if (st.energy < 30 || st.slowT > 0) return;
     st.slowT = 1 + st.energy / 30;
     st.energy = 0;
@@ -170,12 +169,12 @@ function arena(s, demo) {
     const want = st.pilot ? p.data : { fire: g.input.down("fire"), dash: g.input.pressed("dash"), slow: g.input.pressed("slow") };
     if (want.fire && st.cd <= 0) shoot();
     if (want.dash && st.dashCd <= 0) dash();
-    if (want.slow) nyota();
+    if (want.slow) starTime();
     if (st.slowT > 0) { st.slowT -= dt; s.ui.vignette(0.5, "60,255,170"); sound.muffle(0.55); if (st.slowT <= 0) { s.ui.vignette(0); sound.muffle(0); } }
     st.comboT -= dt;
     if (st.comboT <= 0 && st.combo) { st.combo = 0; st.mult = 1; }
     if (hud) {
-      hud.hp.set(p.hp); hud.nyota.set(st.energy); hud.score.set(st.score);
+      hud.hp.set(p.hp); hud.star.set(st.energy); hud.score.set(st.score);
       hud.mult.set(st.mult > 1 ? `×${st.mult}  combo ${st.combo}` : "×1");
       if (st.boss?.hp !== undefined) hud.boss.set(st.boss.hp, st.boss.maxHp);
       if (p.hp <= 2 && !st.slowT) s.ui.vignette(0.35 + Math.sin(g.time * 8) * 0.15);

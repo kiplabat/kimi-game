@@ -143,7 +143,7 @@ export class Audio {
       e = { o, o2, n, f, g, pan };
       this.engines.set(id, e);
     }
-    const bike = kind === "boda";
+    const bike = kind === "bike";
     const base = bike ? 55 : 32, top = bike ? 210 : 120;
     const f0 = base + (top - base) * revs;
     const t = c.currentTime;
