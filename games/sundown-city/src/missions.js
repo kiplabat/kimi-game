@@ -1,4 +1,4 @@
-// The story (six missions against the Kivuli gang), markers, pickups, heat (the wanted level and
+// The story (six missions against the Vipers gang), markers, pickups, heat (the wanted level and
 // the police response), and the city's population: civilians, traffic and parked cars.
 
 import * as THREE from "three";
@@ -120,7 +120,7 @@ export class Missions {
     this.clear();
     const p = this.ctx.player;
     p.cash += reward;
-    this.ctx.hud.notify("MISSION PASSED", `${m.title} · +KSh ${reward.toLocaleString("en-KE")}`, 4);
+    this.ctx.hud.notify("MISSION PASSED", `${m.title} · +$${reward.toLocaleString("en-US")}`, 4);
     this.ctx.audio.pickup();
     this.ctx.save();
     this.ctx.g.current.after(4.5, () => this.start(this.index + 1));
@@ -140,7 +140,7 @@ export class Missions {
     const sh = w.spots.safehouse;
     return [
       {
-        title: "Karibu Nyota", sub: "welcome home",
+        title: "Homecoming", sub: "welcome back to Sundown",
         start: () => {
           this.markAt(sh.inside[0], sh.inside[1]);
           this.objective("Get to your safehouse (the yellow light)");
@@ -154,12 +154,12 @@ export class Missions {
         },
       },
       {
-        title: "Boda Ride", sub: "the city is faster on two wheels",
+        title: "Two Wheels", sub: "the city is faster on a motorbike",
         start: () => {
           const [x, z] = sh.garage;
-          const boda = ctx.vehicles.spawn("boda", x + 2, z, Math.PI / 2);
-          this.objective("Take the boda-boda outside the garage door [F]");
-          this.markAt(boda.x, boda.z, 0, 1.6);
+          const bike = ctx.vehicles.spawn("bike", x + 2, z, Math.PI / 2);
+          this.objective("Take the motorbike outside the garage door [F]");
+          this.markAt(bike.x, bike.z, 0, 1.6);
           const market = w.spots.market?.[1] ?? w.spots.plaza;
           this.step = () => {
             if (P().vehicle) {
@@ -171,11 +171,11 @@ export class Missions {
         },
       },
       {
-        title: "The Warehouse", sub: "Kivuli's people are in the warehouse",
+        title: "The Warehouse", sub: "the Vipers hold the warehouse",
         start: () => {
           const c = w.spots.compound;
           this.markAt(c.gate[0], c.gate[1] - 6, 0, 3);
-          this.objective("Drive to the Kivuli warehouse");
+          this.objective("Drive to the Vipers warehouse");
           this.step = () => {
             if (Math.hypot(P().e.x - c.gate[0], P().e.z - c.gate[1]) < 45) {
               this.clear();
@@ -185,7 +185,7 @@ export class Missions {
               this.objective("Clear the warehouse and its yard");
               this.step = () => {
                 const left = this.aliveEnemies().length;
-                this.objective(`Clear the warehouse — ${left} Kivuli left`);
+                this.objective(`Clear the warehouse — ${left} Vipers left`);
                 if (left === 0) {
                   ctx.pickups.spawn("sniper", cx + 2, cz + 12, { amount: 20 });
                   ctx.pickups.spawn("shotgun", cx - 2, cz + 12, { amount: 24 });
@@ -222,7 +222,7 @@ export class Missions {
         },
       },
       {
-        title: "Convoy", sub: "three armoured cars carry Kivuli's money",
+        title: "Convoy", sub: "three armoured cars carry the Vipers' money",
         start: () => {
           const [lx, lz] = sh.garage;
           ctx.pickups.spawn("rocket", lx + 1, lz - 3, { amount: 6 });
@@ -267,11 +267,11 @@ export class Missions {
         },
       },
       {
-        title: "Kivuli's Tower", sub: "end it",
+        title: "Viper Tower", sub: "end it",
         start: () => {
           const t = w.spots.gangTower;
           this.markAt(t.court[0], t.court[1] - 10, 0, 3);
-          this.objective("Go to Kivuli's tower");
+          this.objective("Go to Viper Tower");
           this.step = () => {
             if (Math.hypot(P().e.x - t.court[0], P().e.z - t.court[1]) < 50) {
               this.clear();
@@ -280,13 +280,13 @@ export class Missions {
               court.forEach((p, i) => this.gang(p[0], p[1], { weapon: i % 2 ? "rifle" : "shotgun", grenades: i === 0 ? 2 : 0 }));
               [[cx - 9, cz - 6], [cx + 9, cz - 6], [cx - 9, cz + 7], [cx + 9, cz + 7], [cx, cz + 4], [cx - 4, cz - 8]].forEach((p) => this.gang(p[0], p[1], { weapon: "rifle", armor: 50 }));
               this.boss = this.gang(cx, cz + 11, { boss: true, weapon: "rifle", grenades: 4, armor: 150, accuracy: 0.85 });
-              this.objective("Take Kivuli's tower: the forecourt, the lobby, then Kivuli");
+              this.objective("Take Viper Tower: the forecourt, the lobby, then their boss");
               this.step = () => {
                 const left = this.aliveEnemies().length;
-                this.objective(this.boss.alive ? `Kivuli's people left: ${left - 1} · Kivuli is in the lobby` : `Kivuli is down — ${left} left`);
+                this.objective(this.boss.alive ? `Vipers left: ${left - 1} · the boss is in the lobby` : `The boss is down — ${left} left`);
                 if (left === 0) {
                   this.done(10000);
-                  ctx.g.current.after(1, () => ctx.hud.notify("NYOTA CITY IS YOURS", "free roam: the city keeps living", 6));
+                  ctx.g.current.after(1, () => ctx.hud.notify("SUNDOWN CITY IS YOURS", "free roam: the city keeps living", 6));
                 }
               };
             }
@@ -297,8 +297,8 @@ export class Missions {
   }
 
   freeRoam() {
-    this.objective("Free roam — Kivuli's leftovers still hold the compounds");
-    this.ctx.hud.objective = ["Free roam", "Drive, fight, explore. Kivuli's leftovers turn up at the compounds."];
+    this.objective("Free roam — the last Vipers still hold the compounds");
+    this.ctx.hud.objective = ["Free roam", "Drive, fight, explore. The last Vipers turn up at the compounds."];
     this.roamT = 30;
   }
 
@@ -389,7 +389,7 @@ export class Population {
     const ctx = this.ctx, p = ctx.player, w = ctx.world, g = ctx.g;
     if (!this.parked) {
       this.parked = true;
-      for (const [x, z, rot] of w.parking) ctx.vehicles.spawn(g.pick(["sedan", "sedan", "suv", "matatu"]), x + 2, z, rot);
+      for (const [x, z, rot] of w.parking) ctx.vehicles.spawn(g.pick(["sedan", "sedan", "suv", "van"]), x + 2, z, rot);
     }
     this.civT -= dt;
     if (this.civT <= 0) {

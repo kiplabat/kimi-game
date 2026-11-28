@@ -85,7 +85,7 @@ export class HUD {
       <div class="nc-hm"></div>
       <div class="nc-dmg"></div>
       <div class="nc-obj"><h4></h4><p></p></div>
-      <div class="nc-cash"><b>KSh 0</b><div class="nc-heat"></div><div class="nc-time"></div></div>
+      <div class="nc-cash"><b>$0</b><div class="nc-heat"></div><div class="nc-time"></div></div>
       <div class="nc-feed"></div>
       <div class="nc-note"></div>
       <div class="nc-prompt"></div>
@@ -117,7 +117,7 @@ export class HUD {
     if (!this.loadEl) {
       this.loadEl = document.createElement("div");
       this.loadEl.className = "nc-screen load";
-      this.loadEl.innerHTML = `<h1 class="nc-logo">NYOTA CITY</h1><div class="nc-tag">loading the city</div><div class="nc-loadbar"><i></i></div>`;
+      this.loadEl.innerHTML = `<h1 class="nc-logo">SUNDOWN CITY</h1><div class="nc-tag">loading the city</div><div class="nc-loadbar"><i></i></div>`;
       this.screens.appendChild(this.loadEl);
     }
     this.loadEl.querySelector("i").style.width = Math.round(pct * 100) + "%";
@@ -128,7 +128,7 @@ export class HUD {
     this.closeMenu();
     const m = document.createElement("div");
     m.className = "nc-screen";
-    m.innerHTML = `<h1 class="nc-logo">NYOTA CITY</h1><div class="nc-tag">a kimi/game open world</div>
+    m.innerHTML = `<h1 class="nc-logo">SUNDOWN CITY</h1><div class="nc-tag">a kimi/game open world</div>
       <div class="nc-menu">${o.items.map((it, i) => `<button data-i="${i}">${it.label}</button>`).join("")}</div>
       <div class="nc-help">${HELP.map(([k, v]) => `<div>${k.split(" ").map((x) => `<kbd>${x}</kbd>`).join("")} ${v}</div>`).join("")}</div>`;
     m.querySelectorAll("button").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); o.items[+b.dataset.i].go(); }));
@@ -218,7 +218,7 @@ export class HUD {
     });
     this.hp.style.width = Math.max(0, (p.e.hp / p.e.maxHp) * 100) + "%";
     this.ar.style.width = Math.max(0, p.armor) + "%";
-    set("cash", p.cash, (v) => (this.cash.textContent = "KSh " + v.toLocaleString("en-KE")));
+    set("cash", p.cash, (v) => (this.cash.textContent = "$" + v.toLocaleString("en-US")));
     set("heat", st.heat + (st.seen ? "s" : ""), () => {
       this.heatEl.innerHTML = [1, 2, 3, 4, 5].map((k) => `<i class="${k <= st.heat ? "on" : ""}">★</i>`).join("");
       this.heatEl.classList.toggle("flash", st.seen && st.heat > 0);
@@ -310,5 +310,5 @@ export class HUD {
 export const HELP = [
   ["W A S D", "move · drive"], ["Mouse", "look · aim"], ["Click", "shoot"], ["Right-click", "aim · scope"],
   ["Shift", "sprint"], ["Space", "jump · handbrake"], ["C", "crouch"], ["R", "reload"],
-  ["1 … 6", "weapons (or scroll)"], ["G", "throw a grenade"], ["F", "car, boda, locker"], ["Esc", "pause · settings"],
+  ["1 … 6", "weapons (or scroll)"], ["G", "throw a grenade"], ["F", "car, bike, locker"], ["Esc", "pause · settings"],
 ];

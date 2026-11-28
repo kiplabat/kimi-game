@@ -2,7 +2,7 @@
 // into app/, which is what the desktop app loads. Run `npm run build` at the repository root first.
 const fs = require("fs");
 const path = require("path");
-const src = path.join(__dirname, "..", "..", "..", "dist", "play", "nyota-city.html");
+const src = path.join(__dirname, "..", "..", "..", "dist", "play", "sundown-city.html");
 if (!fs.existsSync(src)) {
   console.error("Build the game first: npm ci && npm run build (at the repository root)");
   process.exit(1);

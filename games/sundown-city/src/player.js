@@ -137,11 +137,11 @@ export class Player {
     v.unseat();
     this.ctx.audio.engine(v.id, v.type, [v.x, 0, v.z], 0, false);
     const [fx, fz] = v.fwd;
-    // out on the driver's side (right), or the left if that is blocked
+    // out on the driver's side (left), or the right if that is blocked
     const side = v.T.bike ? 1.0 : v.T.wid / 2 + 0.7;
-    let ex = v.x + -fz * side, ez = v.z + fx * side;
+    let ex = v.x + fz * side, ez = v.z - fx * side;
     const w = this.ctx.world;
-    if (!w.navFree(...w.navCell(ex, ez))) { ex = v.x + fz * side; ez = v.z - fx * side; }
+    if (!w.navFree(...w.navCell(ex, ez))) { ex = v.x - fz * side; ez = v.z + fx * side; }
     this.e.x = this.e.ox = ex; this.e.z = this.e.oz = ez;
     this.e.y = this.e.oy = v.groundY + 0.9;
     this.e.vx = v.e.vx * 0.5; this.e.vz = v.e.vz * 0.5;
@@ -365,7 +365,7 @@ export class Player {
     const sh = this.ctx.world.spots.safehouse;
     if (sh && Math.hypot(this.e.x - sh.locker[0], this.e.z - sh.locker[1]) < 2.6) return "[F] locker: ammo, health, save";
     const v = this.ctx.vehicles.nearest([this.e.x, this.e.z], 4, (v) => !v.wrecked);
-    if (v) return v.driver ? `[F] take the ${v.type === "boda" ? "boda" : v.type}` : `[F] ${v.T.bike ? "ride" : "drive"} the ${v.type === "boda" ? "boda" : v.type}`;
+    if (v) return v.driver ? `[F] take the ${v.type === "bike" ? "bike" : v.type}` : `[F] ${v.T.bike ? "ride" : "drive"} the ${v.type === "bike" ? "bike" : v.type}`;
     return null;
   }
 
@@ -387,7 +387,7 @@ export class Player {
         this.pitch += (-0.18 - this.pitch) * Math.min(1, dt * 2);
       }
       pivot = _p.set(v.x, v.groundY + v.T.hgt + 0.5, v.z);
-      dist = v.T.bike ? 4.6 : v.type === "matatu" ? 9.5 : 7;
+      dist = v.T.bike ? 4.6 : v.type === "van" ? 9.5 : 7;
       shoulder = 0;
       fov = 64 + Math.min(14, Math.abs(v.speed) * 0.35);
     } else {

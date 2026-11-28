@@ -1,4 +1,4 @@
-// NYOTA CITY — an open-world third-person action game made with kimi/game on three.js.
+// SUNDOWN CITY — an open-world third-person action game made with kimi/game on three.js.
 // Everything (city, people, cars, weapons, sound) is made in code; it runs offline.
 
 import * as THREE from "three";
@@ -6,28 +6,29 @@ import { game, load, save } from "kimi/game";
 import { makePlan } from "./layout.js";
 import { World } from "./world.js";
 import { SkySystem } from "./sky.js";
-import { Pipeline } from "./render.js";
+import { Pipeline, VIEW } from "./render.js";
+import { WORLD } from "./materials.js";
 import { FX } from "./fx.js";
 import { Audio } from "./audio.js";
 import { Combat, WEAPONS } from "./weapons.js";
-import { Vehicles } from "./vehicles.js";
+import { Vehicles, setVehicleQuality } from "./vehicles.js";
 import { NPC } from "./npc.js";
 import { Player } from "./player.js";
 import { HUD } from "./hud.js";
 import { Missions, Heat, Population, Pickups, policeSpawnPoint } from "./missions.js";
 import { Person, LOOKS } from "./characters.js";
 
-const SAVE_KEY = "nyota-city:save";
-const SET_KEY = "nyota-city:settings";
+const SAVE_KEY = "sundown-city:save";
+const SET_KEY = "sundown-city:settings";
 // settings and saves go through the engine's storage: KimiLM's kimi.storage inside KimiLM, the browser's otherwise
 let settings = { quality: "auto", sens: 1.6, volume: 0.8, invert: false, difficulty: 1 };
 const params = new URLSearchParams(location.search);
 
 const g = game({
-  title: "NYOTA CITY", mode: "3d", preset: "custom", bloom: false, floor: false, world: [700, 700],
-  titleScreen: false, adaptive: settings.quality === "auto" ? { lowerAbove: 30, raiseBelow: 13 } : false,
+  title: "SUNDOWN CITY", mode: "3d", preset: "custom", bloom: false, floor: false, world: [700, 700],
+  titleScreen: false, adaptive: settings.quality === "auto" ? { lowerAbove: 30, raiseBelow: 19 } : false,
   quality: settings.quality === "auto" ? "auto" : ["low", "medium", "high", "high"][+settings.quality],
-  howto: ["Move [W][A][S][D] · look with the mouse · [Click] shoot · [Right-click] aim", "[Shift] sprint · [Space] jump / handbrake · [C] crouch · [R] reload", "[1]–[6] weapons · [G] grenade · [F] cars, bodas, locker", "[Esc] pause and settings"],
+  howto: ["Move [W][A][S][D] · look with the mouse · [Click] shoot · [Right-click] aim", "[Shift] sprint · [Space] jump / handbrake · [C] crouch · [R] reload", "[1]–[6] weapons · [G] grenade · [F] cars, bikes, locker", "[Esc] pause and settings"],
 });
 const inp = g.input;
 inp.bind("fire", ["mouse:0", "pad:7"], { replace: true });
@@ -50,7 +51,7 @@ g.scene("play", (s) => {
   const ctx = {
     g, hud, audio: new Audio(), npcs: [], coverTaken: new Map(), difficulty: settings.difficulty, ready: false, inMenu: true,
   };
-  window.__nyota = ctx;
+  window.__city = ctx;
   // build after the loading screen has painted
   s.after(0.05, () => {
     const sky = new SkySystem(t.scene, t.renderer);
@@ -60,6 +61,14 @@ g.scene("play", (s) => {
     ctx.pipe = pipe;
     ctx.world = new World(g, s, makePlan(2026), sky);
     sky.hills = ctx.world.hills;
+    // what each quality level draws: view distance, window interiors, paint, people and cars far away
+    pipe.onQuality((q) => {
+      ctx.world.setView(VIEW[q]);
+      WORLD.uDetail.value = q >= 1 ? 1 : 0;
+      setVehicleQuality(q);
+      g.three.cullDistance = Math.min(200, VIEW[q] * 0.75);
+      ctx.lightsQ?.(q);
+    });
     hud.buildMap(ctx.world);
     ctx.fx = new FX(g, s);
     ctx.vehicles = new Vehicles(ctx);
@@ -144,7 +153,7 @@ function wire(ctx) {
       if (n.team === "gang") {
         const pay = n.person.look === LOOKS.gangBoss ? 2000 : 100;
         ctx.player.cash += pay;
-        hud.killFeed((pay > 100 ? "Kivuli is down" : "Kivuli member down") + head + ` · +${pay}`, "#ff8a6a");
+        hud.killFeed((pay > 100 ? "Viper boss down" : "Viper down") + head + ` · +${pay}`, "#ff8a6a");
       } else if (n.team === "police") { heatObj.add(1, "an officer is down"); hud.killFeed("officer down" + head, "#7fb2ff"); }
       else { heatObj.add(1, "a civilian was killed"); hud.killFeed("civilian killed", "#ff4d4d"); }
     }
@@ -278,7 +287,7 @@ function applySettings(ctx) {
   p.invertY = settings.invert;
   ctx.audio.volume = settings.volume;
   ctx.difficulty = settings.difficulty;
-  if (settings.quality === "auto") g.opts.adaptive = { lowerAbove: 30, raiseBelow: 13 };
+  if (settings.quality === "auto") g.opts.adaptive = { lowerAbove: 30, raiseBelow: 19 };
   else { g.opts.adaptive = false; g.three.setQuality(+settings.quality); }
 }
 
@@ -290,8 +299,18 @@ function lights(ctx) {
   const lamps = [], rooms = [];
   for (let k = 0; k < 6; k++) { const l = new THREE.PointLight(0xffc98a, 0, 18, 1.8); scene.add(l); lamps.push(l); }
   for (let k = 0; k < 4; k++) { const l = new THREE.PointLight(0xfff0d8, 0, 16, 1.6); scene.add(l); rooms.push(l); }
+  // Every real light costs every lit pixel, so each level has a fixed set (a fixed set also means
+  // shaders compile once per level). The street's light pools are baked into the ground (materials.js).
+  ctx.lightsQ = (q) => {
+    const nl = [0, 2, 4, 6][q], nr = [1, 1, 3, 4][q];
+    ctx.fx?.setQuality(q);
+    head.visible = q >= 1; // low quality: headlights glow but light nothing
+    lamps.forEach((l, i) => (l.visible = i < nl));
+    rooms.forEach((l, i) => (l.visible = i < nr));
+  };
   const head = new THREE.SpotLight(0xfff2d0, 0, 60, 0.5, 0.5, 1.4);
   scene.add(head, head.target);
+  ctx.lightsQ(g.three.quality ?? 1);
   let pickT = 0;
   const cam = g.three.camera;
   const menuCam = { a: 0.6 };
@@ -313,7 +332,7 @@ function lights(ctx) {
     const insideK = (ctx.insideK ??= 0);
     ctx.insideK = insideK + ((room && cam.position.y < room.h ? 1 : 0) - insideK) * Math.min(1, dt * 4);
     sky.hemi.intensity *= 1 - 0.7 * ctx.insideK;
-    g.three.scene.environmentIntensity = (0.15 + 0.45 * (1 - sky.night)) * (1 - 0.75 * ctx.insideK);
+    g.three.scene.environmentIntensity = (0.14 + 0.34 * (1 - sky.night)) * (1 - 0.75 * ctx.insideK);
     g.three.renderer.toneMappingExposure *= 1 - 0.25 * ctx.insideK;
     // pick which lamps and rooms get real lights
     pickT -= dt;
@@ -331,6 +350,24 @@ function lights(ctx) {
       rooms.forEach((l, i) => { const x = rl[i]; if (x) { l.position.set(x[0][0], x[0][1], x[0][2]); l.intensity = 2.6 + 2 * ctx.sky.night; } else l.intensity = 0; });
     }
     for (const l of lamps) l.intensity = sky.night * 22;
+    ctx.vehicles.drawWheels();
+    // contact shadows under what is on screen
+    const cs = fx.contact;
+    cs.begin();
+    for (const v of ctx.vehicles.list) {
+      if (!v.e.alive || !v.mesh.root.visible) continue;
+      cs.add(v.x, v.groundY, v.z, v.T.len * 1.15, v.T.wid * 1.35, v.e.rot);
+    }
+    const near2 = (g.three.cullDistance || 160) ** 2;
+    for (const n of ctx.npcs) {
+      if (!n.alive && !n.person?.group?.parent) continue;
+      if (!n.person?.group?.visible || n.vehicle) continue;
+      const dx = n.e.x - cam.position.x, dz = n.e.z - cam.position.z;
+      if (dx * dx + dz * dz > near2) continue;
+      cs.add(n.e.x, n.e.y - 0.9, n.e.z, 1.0, 1.0, 0);
+    }
+    if (!player.vehicle && !player.dead) cs.add(player.e.x, player.e.y - 0.9, player.e.z, 1.0, 1.0, 0);
+    cs.end();
     const v = player.vehicle;
     if (v && sky.night > 0.25) {
       const [fx2, fz2] = v.fwd;

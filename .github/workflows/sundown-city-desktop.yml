@@ -1,0 +1,74 @@
+# Builds Sundown City as a desktop app and publishes it as a release of this repository:
+#   Windows: sundown-city-<v>-windows-x64-setup.exe (installer) and a .zip (portable)
+#   Linux:   sundown-city-<v>-linux-x64.AppImage and .tar.gz (+ install-linux.sh for KimiOS/Silverblue)
+# Run it from Actions → "Sundown City desktop" → Run workflow, or push a tag sundown-city-v<version>.
+name: Sundown City desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["sundown-city-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Build the engine and the game
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Package the desktop app
+        working-directory: games/sundown-city/desktop
+        run: |
+          npm install --no-audit --no-fund
+          npm run dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sundown-city-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            games/sundown-city/desktop/dist/*.AppImage
+            games/sundown-city/desktop/dist/*.tar.gz
+            games/sundown-city/desktop/dist/*.exe
+            games/sundown-city/desktop/dist/*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(node -p "require('./games/sundown-city/desktop/package.json').version")
+          TAG="sundown-city-v$V"
+          cp games/sundown-city/desktop/install-linux.sh out/
+          ls -la out
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Sundown City $V" --latest=false \
+            --notes "Sundown City $V, made with kimi/game on three.js. Runs offline.
+
+          Windows: run sundown-city-$V-windows-x64-setup.exe (or unzip the .zip and run Sundown City.exe).
+          Linux: make the .AppImage executable and run it; on KimiOS, Fedora Silverblue or anywhere without FUSE, download the .tar.gz and install-linux.sh and run: sh install-linux.sh sundown-city-$V-linux-x64.tar.gz"
+          gh release upload "$TAG" out/* --clobber

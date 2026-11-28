@@ -1,6 +1,6 @@
-// The people of Nyota City and the computer's fighters.
+// The people of Sundown City and the computer's fighters.
 //  civilians: walk the sidewalks, stop, chat, flee from gunfire, carjacked drivers run.
-//  gang (Kivuli) and police: perceive (sight cone, line of sight, hearing), then
+//  gang (the Vipers) and police: perceive (sight cone, line of sight, hearing), then
 //    patrol → investigate → engage (take cover, peek and shoot, advance, flank, throw grenades,
 //    fall back when hurt) → search; they also fight each other.
 

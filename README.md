@@ -19,10 +19,10 @@ Every call is the same in 2D and 3D: `sprite.ship()` is a vector ship on a canva
 |---|---|---|
 | [`space-dodge`](examples/space-dodge/game.js) | 12 | The example from the top of [REFERENCE.md](REFERENCE.md), unchanged |
 | [`paddle-duel`](examples/paddle-duel/game.js) | 48 | 2D: mouse or keys, a computer that predicts bounces, particles, first to 7 |
-| [`nyota-arena`](examples/nyota-arena/game.js) | ~360 | 3D showcase, described below |
-| [`games/nyota-city`](games/nyota-city/README.md) | ~4,800 | An open-world third-person action game: a city you can enter, cars and boda-bodas, six weapons with a scope, gang and police AI, missions, day and night. Ships as a desktop app (Windows and Linux) and in KimiLM |
+| [`star-arena`](examples/star-arena/game.js) | ~360 | 3D showcase, described below |
+| [`games/sundown-city`](games/sundown-city/README.md) | ~5,200 | An open-world third-person action game: a city you can enter, cars and motorbikes, six weapons with a scope, gang and police AI, missions, day and night. Ships as a desktop app (Windows and Linux) and in KimiLM |
 
-Nyota Arena is a twin-stick arena game. It shows:
+Star Arena is a twin-stick arena game. It shows:
 - swarms that flock;
 - hunters that keep their distance and lead their shots;
 - snipers run by a state machine;
@@ -64,12 +64,23 @@ Play any example without a server: open `dist/play/<name>.html`. Each one is a s
 
 ## 0.2: for big 3D games
 
-Nyota City needed the engine to step aside where a game wants its own look, and to scale to a whole city:
+Sundown City needed the engine to step aside where a game wants its own look, and to scale to a whole city:
 - **Custom look:** preset `"custom"`, a manual camera, `setPipeline` for your own post-processing, and `onQuality` events.
 - **Input:** pointer-lock mouse look (`input.look()`, with a free-look fallback), the wheel, and replaceable bindings. Mouse buttons now use mouse events, so you can click to shoot while holding right-click to aim.
 - **3D raycasts:** `s.ray3` against boxes, standing capsules (with head shots) and spheres, through a hash broadphase.
 - **Colliders:** invisible colliders (`hidden`), and solids filtered by tag.
 - **Static things:** kept in their own hash, so a city of about 1,800 colliders costs little per step.
+
+## 0.3: big worlds that run on integrated graphics
+
+Rendering a city on a laptop's integrated GPU is about drawing less, less often, at the right resolution:
+- **`g.three.instances()`:** thousands of copies of one thing in one draw call, culled per copy every frame. Copies within `near` metres stay drawn so their shadows don't vanish behind the camera.
+- **`g.three.bake(group)`:** static meshes merged into one mesh per material per ground cell. A street costs a few draw calls, and cells off screen are skipped.
+- **Entity `cull`:** meshes past a distance are not drawn (`g.three.cullDistance` sets it for all).
+- **Adaptive resolution:** quality now moves down a ladder that lowers the resolution before it drops effects (shadows, bloom). A setting that holds for 20 s is kept for the next start, so a machine measures itself once. `onScale(fn)` gives the scale to a game's own pipeline.
+- **Shadows** are redrawn every frame at high quality and every other frame below. `shadowEvery(n)` overrides this.
+- **Paused games** redraw five times a second instead of every frame.
+- **The report** shows CPU draw time, GPU time (where the browser exposes timer queries), the resolution scale, shadow redraws per second, instances drawn out of the total, and culled entities. Frame time is no longer clamped at 100 ms, so a slow machine shows its real numbers.
 
 ## Build and test
 
@@ -77,8 +88,8 @@ Nyota City needed the engine to step aside where a game wants its own look, and 
 npm install
 npm run build     # dist/kimi-game.js (three external), .min.js, dist/play/*.html
 npm run check     # TypeScript
-npm test          # physics, AI and scene tests (node, no browser)
-npm run serve     # then open http://localhost:8080/examples/nyota-arena/
+npm test          # physics, AI, scene, instance-culling and bake tests (node, no browser)
+npm run serve     # then open http://localhost:8080/examples/star-arena/
 ```
 
 The engine is TypeScript; games are plain JavaScript. `dist/kimi-game.js` leaves only the bare `three` import to the page's import map, and the post-processing addons are bundled in. This means KimiLM's existing three.js entry is enough.

@@ -1,19 +1,16 @@
-// Sky, sun and moon, day and night. A physical sky (Preetham) drives the light colours, the fog,
-// the reflections every shiny thing uses (a PMREM environment map refreshed as the sun moves),
-// the stars, and how much windows and street lamps glow.
+// Sky, sun and moon, day and night. The sky drives the light colours, the fog (drawn in the
+// final pass, see render.js), the reflections every shiny thing uses (a PMREM environment map
+// refreshed as the sun moves), the stars, and how much windows and street lamps glow.
 
 import * as THREE from "three";
-import { WORLD } from "./materials.js";
+import { WORLD, NOISE_TEX } from "./materials.js";
 
 // A stylised sky: a zenith-to-horizon gradient, a sun disc with glow, and drifting clouds.
 // (A physical sky blew out to white around a high sun; this one stays rich and controllable.)
 const SKY_VS = `varying vec3 vDir; void main(){ vDir = normalize((modelMatrix * vec4(position, 0.0)).xyz); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }`;
 const SKY_FS = `
-uniform vec3 uSun, uZenith, uHorizon, uSunCol, uCloud; uniform float uNight, uTime; varying vec3 vDir;
-float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(h21(i), h21(i + vec2(1,0)), f.x), mix(h21(i + vec2(0,1)), h21(i + vec2(1,1)), f.x), f.y); }
-float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * vn(p); p = p * 2.07 + 1.3; a *= 0.5; } return v; }
+uniform vec3 uSun, uZenith, uHorizon, uSunCol, uCloud; uniform float uNight, uTime; uniform sampler2D uNoise; varying vec3 vDir;
+float fbm(vec2 p){ return texture2D(uNoise, p * 0.0625).r * 0.8 + texture2D(uNoise, p * 0.25 + 0.37).b * 0.2; }
 void main(){
   vec3 d = normalize(vDir);
   float h = d.y;
@@ -36,7 +33,7 @@ class StylSky extends THREE.Mesh {
     super(new THREE.SphereGeometry(1, 32, 16), new THREE.ShaderMaterial({
       vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false, depthTest: true,
       uniforms: { uSun: { value: new THREE.Vector3(0, 1, 0) }, uZenith: { value: new THREE.Color() }, uHorizon: { value: new THREE.Color() },
-        uSunCol: { value: new THREE.Color() }, uCloud: { value: new THREE.Color() }, uNight: { value: 0 }, uTime: { value: 0 } },
+        uSunCol: { value: new THREE.Color() }, uCloud: { value: new THREE.Color() }, uNight: { value: 0 }, uTime: { value: 0 }, uNoise: { value: NOISE_TEX } },
     }));
     this.frustumCulled = false;
     this.renderOrder = -10;
@@ -79,7 +76,12 @@ export class SkySystem {
     this.moon = new THREE.Mesh(new THREE.SphereGeometry(60, 24, 16), new THREE.MeshBasicMaterial({ color: 0xdde6ff, fog: false, transparent: true, opacity: 0 }));
     scene.add(this.moon);
 
-    scene.fog = new THREE.Fog(0xa8b8c8, 60, 420);
+    // fog is drawn by the final pass from the depth buffer; these are its colours
+    scene.fog = null;
+    this.fogColor = new THREE.Color(0xa8b8c8);
+    this.scatterColor = new THREE.Color();
+    this.fogDensity = 0.003;
+    this.warm = 0;
     this.pmrem = new THREE.PMREMGenerator(renderer);
     this.envScene = new THREE.Scene();
     this.envSky = new StylSky();
@@ -108,7 +110,7 @@ export class SkySystem {
 
   update(dt, focus) {
     this.hour = (this.hour + (dt / 60) * (24 / DAY_MINUTES)) % 24;
-    // sun path: rises at 6, sets at 18 (Nairobi sits on the equator)
+    // sun path: rises at 6, sets at 18
     const a = ((this.hour - 6) / 12) * Math.PI;
     const elev = Math.sin(a);                  // -1 … 1
     const sunUp = elev > -0.05;
@@ -134,15 +136,19 @@ export class SkySystem {
     this.sun.target.position.copy(focus);
     const low = THREE.MathUtils.smoothstep(elev, 0.0, 0.35);
     const warm = new THREE.Color(1.0, 0.55 + 0.4 * low, 0.32 + 0.6 * low);
-    if (sunUp) { this.sun.color.copy(warm); this.sun.intensity = 0.2 + 3.2 * THREE.MathUtils.smoothstep(elev, -0.05, 0.25); }
+    if (sunUp) { this.sun.color.copy(warm); this.sun.intensity = 0.25 + 4.1 * THREE.MathUtils.smoothstep(elev, -0.05, 0.25); }
     else { this.sun.color.setRGB(0.55, 0.68, 1.0); this.sun.intensity = 0.9; }
-    this.hemi.color.setRGB(0.55 + 0.2 * low, 0.65 + 0.15 * low, 0.85).lerp(new THREE.Color(0.3, 0.38, 0.6), night);
-    this.hemi.groundColor.setRGB(0.25, 0.2, 0.15).lerp(new THREE.Color(0.12, 0.1, 0.1), night);
-    this.hemi.intensity = 0.55 + 0.45 * (1 - night) * (0.6 + 0.4 * low);
+    // daylight is mostly sun: a sun-to-sky ratio near 4:1 gives shape and contrast (sky fills, sun models)
+    this.hemi.color.setRGB(0.62 + 0.12 * low, 0.66 + 0.08 * low, 0.78).lerp(new THREE.Color(0.3, 0.38, 0.6), night);
+    this.hemi.groundColor.setRGB(0.3, 0.24, 0.17).lerp(new THREE.Color(0.12, 0.1, 0.1), night);
+    this.hemi.intensity = 0.5 + 0.22 * (1 - night) * (0.6 + 0.4 * low);
 
-    // fog takes the horizon's colour, a little darker, so far buildings melt into the sky
-    const fog = hor.clone().multiplyScalar(0.62);
-    this.scene.fog.color.copy(fog);
+    // fog takes the horizon's colour, a little darker, so far buildings melt into the sky;
+    // the sun lights it from its side (warm haze at golden hour)
+    this.fogColor.copy(hor).multiplyScalar(0.62);
+    this.scatterColor.copy(u.uSunCol.value).multiplyScalar(0.55 * (1 - night) * (0.5 + 0.5 * lowSun));
+    this.fogDensity = 0.0022 + 0.0016 * lowSun + 0.0018 * night;
+    this.warm = lowSun * (1 - night);
     this.renderer.toneMappingExposure = 0.42 + 0.12 * (1 - night) + night * 0.5;
 
     this.stars.material.opacity = night * 0.9;
@@ -160,7 +166,7 @@ export class SkySystem {
       this.envTarget?.dispose();
       this.envTarget = this.pmrem.fromScene(this.envScene, 0, 0.1, 1100);
       this.scene.environment = this.envTarget.texture;
-      this.scene.environmentIntensity = 0.15 + 0.45 * (1 - night);
+      this.scene.environmentIntensity = 0.14 + 0.34 * (1 - night);
     }
   }
 }

@@ -9,7 +9,7 @@ export const HALF = (N * PITCH) / 2;  // 288: the city spans -288..288
 export const ROAD = 7;            // half road width
 export const WALK = 11;           // road centre to the inner edge of the sidewalk
 export const LOT = PITCH - 2 * WALK;  // 50: buildable width inside a block
-export const LANE = 3.5;          // lane offset from the road centre (traffic keeps left, as in Kenya)
+export const LANE = 3.5;          // lane offset from the road centre (traffic keeps right)
 
 export const roadCentre = (i) => -HALF + i * PITCH;
 /** Block index of a coordinate (0..N-1), or -1 on the outer edge. */
@@ -28,8 +28,8 @@ export const PLACES = {
   safehouse: [3, 3],   // shop row with the player's safehouse
   plaza: [4, 4],       // open square for battles
   garage: [4, 3],      // parking structure with a roof for the sniper mission
-  compound: [6, 5],    // Kivuli gang warehouse
-  gangTower: [1, 6],   // Kivuli's tower
+  compound: [6, 5],    // Vipers gang warehouse
+  gangTower: [1, 6],   // Viper Tower
   market: [2, 4],      // shop row: the market
 };
 

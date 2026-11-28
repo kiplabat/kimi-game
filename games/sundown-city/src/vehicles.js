@@ -1,10 +1,11 @@
-// Vehicles: sedans, SUVs, police cars, matatus (Nairobi's painted minibuses), armoured SUVs and
-// boda-bodas (motorbike taxis). Arcade physics with grip, drift on the handbrake, ramps and jumps,
+// Vehicles: sedans, SUVs, police cars, painted minibuses (vans), armoured SUVs and
+// motorbikes. Arcade physics with grip, drift on the handbrake, ramps and jumps,
 // crashes against the city's walls (oriented corners against boxes), damage, fire and explosions.
-// Traffic keeps left, as in Kenya, and follows the road grid.
+// Traffic keeps right and follows the road grid.
 
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { N, roadCentre, LANE, HALF } from "./layout.js";
 import { M, liveryTexture } from "./materials.js";
 import { Person, civilianLook } from "./characters.js";
@@ -14,8 +15,8 @@ export const VTYPES = {
   suv:     { len: 4.8, wid: 2.05, hgt: 1.95, accel: 12, top: 43, grip: 7.0, turn: 1.8, hp: 300, brake: 28, seatY: 0.85, seatX: -0.3 },
   police:  { len: 4.8, wid: 2.05, hgt: 1.95, accel: 13.5, top: 48, grip: 7.6, turn: 1.9, hp: 320, brake: 30, seatY: 0.85, seatX: -0.3 },
   armored: { len: 5.0, wid: 2.2, hgt: 2.1, accel: 10, top: 40, grip: 7.0, turn: 1.6, hp: 650, brake: 26, seatY: 0.9, seatX: -0.3 },
-  matatu:  { len: 5.6, wid: 2.1, hgt: 2.45, accel: 10, top: 38, grip: 6.2, turn: 1.55, hp: 340, brake: 24, seatY: 0.95, seatX: 1.6 },
-  boda:    { len: 2.0, wid: 0.7, hgt: 1.15, accel: 17, top: 52, grip: 9, turn: 2.7, hp: 110, brake: 34, seatY: 0.62, seatX: -0.15, bike: true },
+  van:     { len: 5.6, wid: 2.1, hgt: 2.45, accel: 10, top: 38, grip: 6.2, turn: 1.55, hp: 340, brake: 24, seatY: 0.95, seatX: 1.6 },
+  bike:    { len: 2.0, wid: 0.7, hgt: 1.15, accel: 17, top: 52, grip: 9, turn: 2.7, hp: 110, brake: 34, seatY: 0.62, seatX: -0.15, bike: true },
 };
 const PAINTS = [0xb71c1c, 0x0d47a1, 0x1b5e20, 0xf9a825, 0xeeeeee, 0x212121, 0x6a1b9a, 0x00838f, 0xbf360c, 0x9e9e9e, 0x3e2723, 0x1a237e];
 
@@ -28,26 +29,107 @@ const trimMat = new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.5
 const charMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 1 });
 const redBar = new THREE.MeshStandardMaterial({ color: 0x400000, emissive: 0xff0020, emissiveIntensity: 0 });
 const blueBar = new THREE.MeshStandardMaterial({ color: 0x000040, emissive: 0x2040ff, emissiveIntensity: 0 });
-export const VEHICLE_LIGHTS = { headMat, tailMat };
+// lights shared by every vehicle (night); police bars and brake lights are per vehicle
+export const VEHICLE_LIGHTS = { head: 0.2, tail: 0.4 };
+const GLOW = { headMat: 1, tailMat: 2, redBar: 3, blueBar: 4 };
 
+// Paint: clear-coated at high quality, plain standard (much cheaper per pixel) below.
+let richPaint = true;
+export function setVehicleQuality(q) { richPaint = q >= 2; }
 function paintMat(color) {
-  return new THREE.MeshPhysicalMaterial({ color, roughness: 0.32, metalness: 0.55, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.3 });
+  return richPaint
+    ? new THREE.MeshPhysicalMaterial({ color, roughness: 0.32, metalness: 0.55, clearcoat: 1, clearcoatRoughness: 0.08, envMapIntensity: 1.3 })
+    : new THREE.MeshStandardMaterial({ color, roughness: 0.28, metalness: 0.6, envMapIntensity: 1.5 });
 }
+
+/**
+ * Everything on a vehicle that is not paint or glass, in one material: colours ride on the
+ * vertices, and lamps glow by channel (1 head, 2 tail, 3 red bar, 4 blue bar) from uniforms.
+ */
+function detailMat() {
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.35 });
+  const u = { uGlow: { value: [new THREE.Color(), new THREE.Color(), new THREE.Color(), new THREE.Color()] } };
+  m.userData.glow = u.uGlow.value;
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uGlow = u.uGlow;
+    sh.vertexShader = sh.vertexShader.replace("#include <common>", "#include <common>\nattribute float aGlow;\nvarying float vGlow;")
+      .replace("#include <begin_vertex>", "#include <begin_vertex>\nvGlow = aGlow;");
+    sh.fragmentShader = sh.fragmentShader.replace("#include <common>", "#include <common>\nvarying float vGlow;\nuniform vec3 uGlow[4];")
+      .replace("#include <emissivemap_fragment>", `#include <emissivemap_fragment>
+        if (vGlow > 0.5) {
+          vec3 gc = vGlow < 1.5 ? uGlow[0] : vGlow < 2.5 ? uGlow[1] : vGlow < 3.5 ? uGlow[2] : uGlow[3];
+          totalEmissiveRadiance += gc;
+        }`);
+  };
+  m.customProgramCacheKey = () => "veh-detail";
+  return m;
+}
+
+/** A rounded box: fewer segments for small parts (most of a car's triangles were in its trim). */
 function rb(w, h, d, r, mat, x, y, z) {
-  const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, 3, Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01)), mat);
+  const big = Math.max(w, h, d);
+  const seg = big > 1.5 ? 3 : big > 0.5 ? 2 : 1;
+  const m = new THREE.Mesh(new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2 - 0.01, h / 2 - 0.01, d / 2 - 0.01)), mat);
   m.position.set(x, y, z);
   m.castShadow = true; m.receiveShadow = true;
   return m;
 }
+/** A wheel is only a pivot: the tyres and rims of every vehicle are drawn as two instanced meshes. */
 function wheel(r, w, x, z, front) {
   const g = new THREE.Group();
   const spin = new THREE.Group();
-  const tire = new THREE.Mesh(tireGeo, M.rubber()); tire.scale.set(r, r, w); tire.castShadow = true;
-  const rim = new THREE.Mesh(rimGeo, M.metal()); rim.scale.set(r * 0.6, r * 0.6, w * 1.04);
-  spin.add(tire, rim);
   g.add(spin);
   g.position.set(x, r, z);
-  return { g, spin, front, r };
+  return { g, spin, front, r, tire: new THREE.Matrix4().makeScale(r, r, w), rim: new THREE.Matrix4().makeScale(r * 0.6, r * 0.6, w * 1.04) };
+}
+
+/** Merge a vehicle's parts into three meshes: paint, glass and details (one draw call each). */
+function mergeVehicle(body, paint) {
+  const parts = { paint: [], glass: [], detail: [] };
+  const own = new Map(); // textured parts (a van's livery) keep their own material
+  const col = new THREE.Color();
+  for (const o of [...body.children]) {
+    if (!o.isMesh) continue;
+    o.updateMatrix();
+    const g = o.geometry.clone().applyMatrix4(o.matrix);
+    if (o.material.map) {
+      if (!own.has(o.material)) own.set(o.material, []);
+      own.get(o.material).push(g.index ? g.toNonIndexed() : g);
+      body.remove(o); o.geometry.dispose();
+      continue;
+    }
+    const kind = o.material === paint ? "paint" : o.material === glassMat ? "glass" : "detail";
+    if (kind === "detail") {
+      const n = g.attributes.position.count;
+      const c = new Float32Array(n * 3), gl = new Float32Array(n);
+      col.copy(o.material.color);
+      if (o.material.map) col.setRGB(0.9, 0.9, 0.9);
+      const ch = o.material === headMat ? 1 : o.material === tailMat ? 2 : o.material === redBar ? 3 : o.material === blueBar ? 4 : 0;
+      for (let i = 0; i < n; i++) { c[i * 3] = col.r; c[i * 3 + 1] = col.g; c[i * 3 + 2] = col.b; gl[i] = ch; }
+      g.setAttribute("color", new THREE.BufferAttribute(c, 3));
+      g.setAttribute("aGlow", new THREE.BufferAttribute(gl, 1));
+    }
+    parts[kind].push(g.index ? g.toNonIndexed() : g);
+    body.remove(o);
+    o.geometry.dispose();
+  }
+  const det = detailMat();
+  const out = {};
+  for (const [kind, list] of Object.entries(parts)) {
+    if (!list.length) continue;
+    const m = new THREE.Mesh(mergeGeometries(list), kind === "paint" ? paint : kind === "glass" ? glassMat : det);
+    m.castShadow = kind !== "glass"; m.receiveShadow = true;
+    body.add(m);
+    out[kind] = m;
+  }
+  out.own = [];
+  for (const [mat, list] of own) {
+    const m = new THREE.Mesh(mergeGeometries(list), mat);
+    m.castShadow = m.receiveShadow = true;
+    body.add(m);
+    out.own.push(m);
+  }
+  return { ...out, det };
 }
 
 function buildMesh(type, paint, i) {
@@ -59,8 +141,8 @@ function buildMesh(type, paint, i) {
   const add = (...m) => body.add(...m);
   const p = paint;
   let bar = null;
-  if (type === "boda") {
-    add(rb(0.62, 0.26, 0.3, 0.1, p, 0.15, 0.82, 0)); // tank
+  if (type === "bike") {
+    add(rb(0.62, 0.26, 0.3, 0.1, p, 0.15, 0.82, 0)); // fuel tank
     add(rb(0.8, 0.12, 0.3, 0.05, trimMat, -0.35, 0.86, 0)); // seat
     add(rb(0.5, 0.35, 0.28, 0.06, M.darkMetal(), 0.05, 0.5, 0)); // engine
     add(rb(0.45, 0.06, 0.4, 0.03, p, -0.75, 0.88, 0)); // rack
@@ -69,7 +151,7 @@ function buildMesh(type, paint, i) {
     const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), headMat); lamp.position.set(0.82, 0.95, 0); add(lamp);
     const exh = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.7, 8).rotateZ(Math.PI / 2), M.metal()); exh.position.set(-0.4, 0.38, 0.17); add(exh);
     for (const [x, f] of [[0.8, true], [-0.72, false]]) { const w = wheel(0.33, 0.1, x, 0, f); add(w.g); wheels.push(w); }
-  } else if (type === "matatu") {
+  } else if (type === "van") {
     const liv = new THREE.MeshPhysicalMaterial({ map: liveryTexture(i), roughness: 0.35, metalness: 0.3, clearcoat: 1, envMapIntensity: 1.2 });
     add(rb(5.6, 1.75, 2.1, 0.25, liv, 0, 1.3, 0));
     add(rb(4.4, 0.55, 2.14, 0.12, glassMat, -0.5, 1.75, 0)); // side windows
@@ -103,7 +185,8 @@ function buildMesh(type, paint, i) {
     const r = big ? 0.42 : 0.34, ax = L / 2 - (big ? 0.95 : 0.8), wz = W / 2 - 0.12;
     for (const [x, z, f] of [[ax, wz, true], [ax, -wz, true], [-ax, wz, false], [-ax, -wz, false]]) { const w = wheel(r, big ? 0.3 : 0.24, x, z, f); add(w.g); wheels.push(w); }
   }
-  return { root, body, wheels, bar };
+  const merged = mergeVehicle(body, p);
+  return { root, body, wheels, bar: !!bar, merged };
 }
 
 let VID = 1;
@@ -120,7 +203,7 @@ export class Vehicle {
     const T = this.T;
     const y0 = ctx.world.groundAt(x, z, 0);
     this.e = ctx.g.current.add({ at: [x, y0 + T.hgt / 2, z], capsule: [T.wid * 0.55, T.hgt], radius: T.bike ? 0.55 : T.wid * 0.6,
-      mesh: m.root, tags: ["vehicle"], solid: ["vehicle", "person"], mass: T.bike ? 3 : 14, face: "none", hp: T.hp, rot });
+      mesh: m.root, cull: 190, tags: ["vehicle"], solid: ["vehicle", "person"], mass: T.bike ? 3 : 14, face: "none", hp: T.hp, rot });
     m.root.children[0].position.y = -T.hgt / 2;
     this.e.data.vehicleObj = this;
     this.e.rot = this.e.orot = rot;
@@ -146,8 +229,8 @@ export class Vehicle {
     this.driver = person;
     if (person) {
       const T = this.T;
-      // traffic keeps left in Kenya, so the driver sits on the right (+z)
-      person.group.position.set(T.seatX, T.seatY + 0.9 - 0.15, T.bike ? 0 : 0.38);
+      // traffic keeps right, so the driver sits on the left (−z)
+      person.group.position.set(T.seatX, T.seatY + 0.9 - 0.15, T.bike ? 0 : -0.38);
       person.group.rotation.set(0, 0, 0);
       this.mesh.body.add(person.group);
       person.animate(0.016, { speed: 0, ride: T.bike ? "bike" : "car" });
@@ -163,6 +246,7 @@ export class Vehicle {
   drive(dt, c) {
     const e = this.e, T = this.T, w = this.ctx.world;
     if (this.wrecked) c = { throttle: 0, steer: 0, brake: true };
+    this.lastThrottle = c.throttle;
     const [fx, fz] = this.fwd;
     const rx = -fz, rz = fx;
     let vf = e.vx * fx + e.vz * fz;
@@ -299,8 +383,8 @@ export class Vehicle {
     this.ctx.shake?.(p, 1.4);
     this.vy = 7;
     this.e.y += 0.1;
-    this.mesh.root.traverse((o) => { if (o.isMesh && o.material !== M.rubber()) o.material = charMat; });
-    for (const b of this.mesh.bar ?? []) b.material = charMat;
+    for (const k of ["paint", "glass", "detail"]) if (this.mesh.merged[k]) this.mesh.merged[k].material = charMat;
+    for (const m of this.mesh.merged.own) m.material = charMat;
     // people around get hurt; the driver too
     this.ctx.combat.explode(p, { id: "car", splash: 6, dmg: 120 }, from);
     this.onWreck?.(from);
@@ -337,12 +421,16 @@ export class Vehicle {
 
   /** Lights: headlights at night, a flashing bar on police cars. */
   lights(night, t) {
-    if (this.mesh.bar && !this.wrecked) {
+    if (this.wrecked) return;
+    const gl = this.mesh.merged.det.userData.glow;
+    gl[0].setRGB(1, 0.95, 0.82).multiplyScalar(VEHICLE_LIGHTS.head);
+    const braking = this.driver && this.speed > 1 && this.lastThrottle < 0;
+    gl[1].setRGB(1, 0.06, 0.06).multiplyScalar(VEHICLE_LIGHTS.tail * (braking ? 2.5 : 1));
+    if (this.mesh.bar) {
       const on = this.siren ? 1 : 0;
       const ph = Math.floor(t * 6) % 2;
-      this.mesh.bar[0].material = redBar; this.mesh.bar[1].material = blueBar;
-      redBar.emissiveIntensity = on * (ph ? 6 : 0.3);
-      blueBar.emissiveIntensity = on * (ph ? 0.3 : 6);
+      gl[2].setRGB(1, 0, 0.12).multiplyScalar(on * (ph ? 6 : 0.3));
+      gl[3].setRGB(0.12, 0.25, 1).multiplyScalar(on * (ph ? 0.3 : 6));
     }
     void night;
   }
@@ -361,6 +449,38 @@ export class Vehicles {
     this.ctx = ctx;
     this.list = [];
     this.trafficTarget = 18;
+    // every tyre and every rim in the city: two draw calls
+    const cap = 512;
+    this.tires = new THREE.InstancedMesh(tireGeo, M.rubber(), cap);
+    this.rims = new THREE.InstancedMesh(rimGeo, M.metal(), cap);
+    for (const im of [this.tires, this.rims]) {
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.frustumCulled = false; im.count = 0; im.receiveShadow = true;
+      ctx.g.three.scene.add(im);
+    }
+    this.tires.castShadow = true;
+    this._m = new THREE.Matrix4();
+  }
+  /** After the engine has placed the vehicles for this frame: wheels of the ones on screen. */
+  drawWheels() {
+    let k = 0;
+    const cap = this.tires.instanceMatrix.count, m = this._m;
+    for (const v of this.list) {
+      const root = v.mesh.root;
+      if (!v.e.alive || !root.visible || !root.parent) continue;
+      root.updateMatrixWorld(true);
+      for (const wh of v.mesh.wheels) {
+        if (k >= cap) break;
+        this.tires.setMatrixAt(k, m.multiplyMatrices(wh.spin.matrixWorld, wh.tire));
+        this.rims.setMatrixAt(k, m.multiplyMatrices(wh.spin.matrixWorld, wh.rim));
+        k++;
+      }
+    }
+    for (const im of [this.tires, this.rims]) {
+      im.count = k;
+      im.instanceMatrix.clearUpdateRanges(); im.instanceMatrix.addUpdateRange(0, k * 16);
+      im.instanceMatrix.needsUpdate = true;
+    }
   }
   spawn(type, x, z, rot, o = {}) {
     const v = new Vehicle(this.ctx, type, x, z, rot, o);
@@ -399,13 +519,13 @@ export class Vehicles {
     return best;
   }
 
-  // ---------- traffic on the road grid (keeps left) ----------
+  // ---------- traffic on the road grid (keeps right) ----------
   /** A lane point: on road between intersections a→b, with t along it. */
   lanePoint(a, b, t) {
     const ax = roadCentre(a[0]), az = roadCentre(a[1]), bx = roadCentre(b[0]), bz = roadCentre(b[1]);
     const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1;
-    // left of the direction of travel: (dz, −dx)/l
-    return [ax + dx * t + (dz / l) * LANE, az + dz * t + (-dx / l) * LANE];
+    // right of the direction of travel: (−dz, dx)/l
+    return [ax + dx * t + (-dz / l) * LANE, az + dz * t + (dx / l) * LANE];
   }
   nextNode(from, at) {
     const opts = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([di, dj]) => [at[0] + di, at[1] + dj])
@@ -423,11 +543,11 @@ export class Vehicles {
       if (d < minD || d > maxD) continue;
       if (avoidView && avoidView(x, z)) continue;
       if (this.nearest([x, z], 9)) continue;
-      const type = g.pick(["sedan", "sedan", "sedan", "suv", "matatu", "matatu", "boda", "boda"]);
+      const type = g.pick(["sedan", "sedan", "sedan", "suv", "van", "van", "bike", "bike"]);
       const v = this.spawn(type, x, z, Math.atan2(roadCentre(b[1]) - roadCentre(a[1]), roadCentre(b[0]) - roadCentre(a[0])));
-      v.ai = { mode: "traffic", a, b, speed: type === "boda" ? 13 : type === "matatu" ? 12 : 11 };
+      v.ai = { mode: "traffic", a, b, speed: type === "bike" ? 13 : type === "van" ? 12 : 11 };
       const driver = new Person(civilianLook(g));
-      if (type === "boda") driver.look.hat = "helmet";
+      if (type === "bike") driver.look.hat = "helmet";
       v.seat(driver);
       v.npcDriver = true;
       return v;
@@ -463,10 +583,11 @@ export class Vehicles {
 
   update(dt, playerVehicle) {
     const t = this.ctx.g.time, night = this.ctx.sky.night;
-    VEHICLE_LIGHTS.headMat.emissiveIntensity = 0.2 + night * 5;
-    VEHICLE_LIGHTS.tailMat.emissiveIntensity = 0.4 + night * 2.5;
+    VEHICLE_LIGHTS.head = 0.2 + night * 5;
+    VEHICLE_LIGHTS.tail = 0.4 + night * 2.5;
     for (const v of this.list) {
       if (!v.e.alive) continue;
+      v.lights(night, t);
       if (v === playerVehicle) continue; // the player drives it
       let c = { throttle: 0, steer: 0, brake: true };
       if (v.wrecked) c = { throttle: 0, steer: 0, brake: true };
@@ -495,7 +616,6 @@ export class Vehicles {
         }
       }
       v.drive(dt, c);
-      v.lights(night, t);
       if (v.smoking && Math.random() < dt * 8) this.ctx.fx.smoke.add([v.x, v.e.y + 0.4, v.z], [0, 1.5, 0], 2, 0.6, 2.5, [0.2, 0.2, 0.2], 0.5);
     }
     this.list = this.list.filter((v) => v.e.alive);

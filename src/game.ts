@@ -10,7 +10,7 @@ import { Render2D, type Renderer, type Bounds } from "./renderer";
 import { Render3D } from "./render3d";
 import { addHighScore, highScores } from "./storage";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
 const STEP = 1 / 60;
 
 export interface GameOpts {
@@ -34,7 +34,7 @@ export interface GameOpts {
   preset?: "neon" | "night" | "day" | "dusk" | "space" | "custom";
   quality?: "auto" | "low" | "medium" | "high";
   /** Adaptive quality: false to keep it fixed, or the frame times (ms) that lower or raise it. */
-  adaptive?: boolean | { lowerAbove?: number; raiseBelow?: number };
+  adaptive?: boolean | { lowerAbove?: number; raiseBelow?: number; minScale?: number };
   /** 3D mouse look: a click locks the pointer; unlocking it (Esc) pauses the game. Read deltas with g.input.look(). */
   lockPointer?: boolean;
   bloom?: boolean;
@@ -308,6 +308,21 @@ export class Game {
           onQuality: (fn: (q: number) => void) => r.onQuality(fn),
           setQuality: (q: number) => r.setQuality(q),
           get quality() { return r.level; },
+          /** Many copies of one thing in one draw, culled per copy: trees, lamps, crates. */
+          instances: (geometry: any, material: any, o?: { shadow?: boolean; far?: number; near?: number }) => r.instances(geometry, material, o),
+          /** Merge the static meshes under a group: one mesh per material per ground cell. */
+          bake: (root: any, o?: { cell?: number; skip?: (m: any) => boolean }) => r.bake(root, o),
+          /** Redraw shadows every n frames (0: by quality); refreshShadows() after a big change. */
+          shadowEvery: (n: number) => r.shadowEvery(n),
+          refreshShadows: () => r.refreshShadows(),
+          /** fn(scale 0.5..1) now and when the adaptive resolution changes (for your own pipeline). */
+          onScale: (fn: (s: number) => void) => r.onScale(fn),
+          get scale() { return r.renderScale; },
+          /** Pixel ratio a quality level uses before the scale. */
+          pixelRatio: (q?: number) => r.basePixelRatio(q),
+          /** Hide entity meshes beyond this distance from the camera (0: never; per entity: { cull: m }). */
+          get cullDistance() { return r.cullDistance; },
+          set cullDistance(v: number) { r.cullDistance = v; },
         }
       : null;
   }
@@ -319,10 +334,12 @@ export class Game {
   // ---------- loop ----------
   private frame(now: number) {
     requestAnimationFrame((t) => this.frame(t));
-    const realDt = Math.min(0.1, Math.max(0, (now - this.last) / 1000));
+    const rawDt = Math.max(0, (now - this.last) / 1000);
+    const realDt = Math.min(0.1, rawDt); // the simulation never steps more than 0.1 s at once
     this.last = now;
-    if (realDt > 0) {
-      this.frameMs = this.frameMs * 0.92 + realDt * 1000 * 0.08;
+    // frame time is measured unclamped (up to 2 s), so a slow machine shows its real numbers
+    if (rawDt > 0 && rawDt < 2) {
+      this.frameMs = this.frameMs * 0.92 + rawDt * 1000 * 0.08;
       this.fps = 1000 / this.frameMs;
     }
     const running = this.state === "play" || this.state === "title" || this.state === "over";
@@ -467,9 +484,10 @@ function formatReport(r: ReturnType<Game["report"]>) {
   return [
     `${r.engine}  ${r.mode}  ${r.state}`,
     `scene ${r.scene}  t=${r.sceneTime}s  ×${r.timeScale}`,
-    `fps ${r.fps}  frame ${r.frameMs}ms  step ${r.stepMs}ms`,
-    rd.renderer + (rd.quality !== undefined ? `  q${rd.quality}${rd.bloom ? " bloom" : ""}${rd.shadows ? " shadows" : ""}` : ""),
+    `fps ${r.fps}  frame ${r.frameMs}ms  step ${r.stepMs}ms` + ((r.render as any).submitMs !== undefined ? `\ndraw (cpu) ${(r.render as any).submitMs}ms  gpu ${(r.render as any).gpuMs ?? "n/a"}${(r.render as any).gpuMs !== null ? "ms" : ""}` : ""),
+    rd.renderer + (rd.quality !== undefined ? `  q${rd.quality} ×${rd.scale}${rd.bloom ? " bloom" : ""}${rd.shadows ? ` shadows ${rd.shadowsPerSec}/s` : ""}` : ""),
     rd.drawCalls !== undefined ? `draw calls ${rd.drawCalls}  tris ${rd.triangles}` : "",
+    rd.instances !== undefined ? `instances ${rd.instances}  culled ${rd.culled}` : "",
     `particles ${rd.particles}  collisions/s ${r.collisionsPerSec}`,
     `entities ${r.entities}`,
     tagLines,

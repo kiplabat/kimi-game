@@ -1,4 +1,4 @@
-// Nyota City desktop app: a window around the game, fully offline.
+// Sundown City desktop app: a window around the game, fully offline.
 // The game is one HTML file (app/index.html); nothing is fetched from the internet.
 const { app, BrowserWindow, Menu, session } = require("electron");
 const path = require("path");
@@ -13,7 +13,7 @@ app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 function create() {
   const win = new BrowserWindow({
     width: 1600, height: 900, minWidth: 960, minHeight: 540,
-    backgroundColor: "#000000", title: "Nyota City", show: false, autoHideMenuBar: true,
+    backgroundColor: "#000000", title: "Sundown City", show: false, autoHideMenuBar: true,
     icon: path.join(process.resourcesPath ?? __dirname, "icon.png"),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false, spellcheck: false },
   });
